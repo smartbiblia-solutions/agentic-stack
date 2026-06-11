@@ -44,8 +44,9 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 ### 1. Clone and run
 
 ```bash
-git clone https://github.com/smartbiblia-solutions/agentic-stack.git
-cd agentic-stack
+git clone --filter=blob:none --sparse https://github.com/smartbiblia-solutions/agentic-stack.git mcp
+cd mcp
+git sparse-checkout set mcp/primo
 ```
 
 Start the server with the transport of your choice:
@@ -184,43 +185,29 @@ docker compose -f mcp/compose.yml up --build
 
 ---
 
-## Option 2 — Zero-install
+## Option 2 — Zero-install (stdio only)
 
 `uv` can run a script directly from a URL — no clone, no local files.
-Dependencies are resolved automatically on first run and cached locally.
+This works as a true single-step zero-install **only with `stdio`**: the client
+config embeds the `uv run <url>` command and the client manages the process itself.
 
-```bash
-# stdio
-uv run https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/main/mcp/primo/mcp_server.py \
-  --api-key YOUR_PRIMO_KEY \
-  --vid MyUni:MyView --tab Everything --scope Everything \
-  --region eu --transport stdio
-
-# streamable-http
-uv run https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/main/mcp/primo/mcp_server.py \
-  --api-key YOUR_PRIMO_KEY \
-  --vid MyUni:MyView --tab Everything --scope Everything \
-  --host 0.0.0.0 --port 8013 --region eu --transport streamable-http
-# → endpoint: http://localhost:8013/mcp
-```
+For `sse` or `streamable-http`, `uv run <url>` still starts a local server on
+localhost — you would then need to register the endpoint separately, which is
+equivalent to Option 1 HTTP mode (just without cloning first).
 
 ### 2.1 Claude Code
 
 ```bash
-# stdio — one command, no server to start
 claude mcp add primo -- \
   uv run https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/main/mcp/primo/mcp_server.py \
   --api-key YOUR_PRIMO_KEY \
   --vid MyUni:MyView --tab Everything --scope Everything \
   --region eu --transport stdio
-
-# streamable-http — start the zero-install server first, then register it
-claude mcp add --transport http primo http://localhost:8013/mcp
 ```
 
-### 2.2 Claude Desktop
+Check status: `claude mcp list` or `/mcp` inside a session.
 
-**stdio** — Claude Desktop fetches and launches the script directly from GitHub:
+### 2.2 Claude Desktop
 
 ```jsonc
 {
@@ -242,7 +229,11 @@ claude mcp add --transport http primo http://localhost:8013/mcp
 }
 ```
 
+Restart Claude Desktop after saving; tools appear under the plug icon.
+
 ### 2.3 Cursor / VS Code / other `mcp.json` clients
+
+(Cursor: `~/.cursor/mcp.json` — VS Code: `.vscode/mcp.json`)
 
 ```jsonc
 {
