@@ -4,6 +4,7 @@ __pycache__/
 build/
 wheels/
 *.egg-info
+**/*.lock
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints
@@ -23,11 +24,8 @@ wheels/
 .env.*
 **/.env.*
 
-# Private examples files
+# Private
 outputs-examples/
-
-# Private changelogs
 **/CHANGELOG.json
-
-# Private zip
 **/*.zip
+**/DEPLOYMENT.md

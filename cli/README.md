@@ -55,20 +55,3 @@ smartbiblia add sudoc --dest ./mon-projet/skills
 smartbiblia update idref
 smartbiblia update synthesize
 ```
-
-## Développement local
-
-```bash
-cd cli/
-uv sync
-uv run smartbiblia list
-```
-
-### Publier sur PyPI
-
-```bash
-uv build
-uv publish
-```
-
-> **Note :** mettre à jour `GITHUB_REPO` dans `installer.py` si le repo est renommé.
