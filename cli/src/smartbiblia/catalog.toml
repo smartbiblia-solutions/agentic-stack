@@ -1,0 +1,51 @@
+# Catalogue des skills disponibles.
+# Ce fichier est lu directement depuis GitHub par la CLI.
+# Mettre à jour ce fichier lors de l'ajout d'une nouvelle skill.
+
+[skills.resolve-idref]
+description = "Alignement automatique de noms de personnes vers des PPNs IdRef avec score de confiance"
+path = "skills/resolve-authorities-idref"
+maturity = "experimental"
+tags = ["authority", "french", "abes", "idref", "alignment"]
+
+[skills.sudoc]
+description = "Recherche dans le catalogue collectif SUDOC (livres, thèses, périodiques, manuscrits)"
+path = "skills/search-records-sudoc"
+maturity = "stable"
+tags = ["catalog", "french", "unimarc", "abes", "sudoc"]
+
+[skills.hal]
+description = "Recherche dans HAL, dépôt ouvert français (articles, thèses, rapports)"
+path = "skills/search-records-hal"
+maturity = "stable"
+tags = ["repository", "french", "open-access", "hal"]
+
+[skills.openalex]
+description = "Recherche dans OpenAlex, la plus grande base bibliographique mondiale en accès ouvert"
+path = "skills/search-works-openalex"
+maturity = "stable"
+tags = ["global", "open-access", "openalex", "doi"]
+
+[skills.generate-queries]
+description = "Génération de stratégies de recherche documentaire à partir d'une question de recherche (8-15 requêtes bilingues)"
+path = "skills/generate-search-queries"
+maturity = "stable"
+tags = ["search-strategy", "bilingual", "queries"]
+
+[skills.synthesize]
+description = "Synthèse de littérature académique (screening PRISMA, résumé, appréciation qualité, synthèse thématique/chronologique)"
+path = "skills/synthesize-literature"
+maturity = "stable"
+tags = ["synthesis", "review", "prisma", "literature"]
+
+[skills.convert-unimarc]
+description = "Conversion de notices UNIMARC entre formats XML, JSON et ISO 2709 binaire"
+path = "skills/convert-records-unimarc"
+maturity = "stable"
+tags = ["unimarc", "marc", "conversion", "format"]
+
+[skills.dmp]
+description = "Rédaction de Plans de Gestion de Données (PGD/DMP) selon les principes FAIR"
+path = "skills/write-data-management-plan"
+maturity = "experimental"
+tags = ["dmp", "fair", "open-science", "research"]

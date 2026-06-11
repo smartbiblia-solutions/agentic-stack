@@ -1,0 +1,274 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "extract_metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "research_type",
+    "study_design",
+    "epistemological_orientation",
+    "methodology",
+    "corpus",
+    "variables_or_constructs",
+    "hypotheses_or_research_questions",
+    "theoretical_framework",
+    "reported_results_summary",
+    "stated_limitations",
+    "stated_future_work",
+    "data_availability_statement"
+  ],
+  "properties": {
+    "research_type": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "enum": [
+            "empirique",
+            "théorique",
+            "revue",
+            "méta-analyse",
+            "étude de cas",
+            "computationnelle",
+            "autre"
+          ]
+        }
+      ]
+    },
+    "study_design": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 500
+        }
+      ]
+    },
+    "epistemological_orientation": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "enum": [
+            "positiviste",
+            "interprétatif",
+            "constructiviste",
+            "critique",
+            "autre"
+          ]
+        }
+      ]
+    },
+    "methodology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "approach",
+        "data_collection_methods",
+        "tools_or_instruments",
+        "analysis_strategy"
+      ],
+      "properties": {
+        "approach": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "enum": [
+                "qualitatif",
+                "quantitatif",
+                "mixte",
+                "computationnel"
+              ]
+            }
+          ]
+        },
+        "data_collection_methods": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 12,
+          "items": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 200
+          }
+        },
+        "tools_or_instruments": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 12,
+          "items": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 200
+          }
+        },
+        "analysis_strategy": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 5,
+              "maxLength": 500
+            }
+          ]
+        }
+      }
+    },
+    "corpus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "description",
+        "size",
+        "sampling_strategy",
+        "period",
+        "geography"
+      ],
+      "properties": {
+        "description": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 5,
+              "maxLength": 600
+            }
+          ]
+        },
+        "size": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          ]
+        },
+        "sampling_strategy": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 250
+            }
+          ]
+        },
+        "period": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 120
+            }
+          ]
+        },
+        "geography": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 200
+            }
+          ]
+        }
+      }
+    },
+    "variables_or_constructs": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 120
+      }
+    },
+    "hypotheses_or_research_questions": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 15,
+      "items": {
+        "type": "string",
+        "minLength": 5,
+        "maxLength": 350
+      }
+    },
+    "theoretical_framework": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 400
+        }
+      ]
+    },
+    "reported_results_summary": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 1200
+    },
+    "stated_limitations": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 15,
+      "items": {
+        "type": "string",
+        "minLength": 5,
+        "maxLength": 250
+      }
+    },
+    "stated_future_work": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 500
+        }
+      ]
+    },
+    "data_availability_statement": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 400
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,33 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+wheels/
+*.egg-info
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# VS Code settings
+.vscode/
+
+# Pytest cache
+.pytest_cache/
+
+# Virtual environments
+.venv
+
+# Environment files (all locations)
+.env
+**/.env
+.env.*
+**/.env.*
+
+# Private examples files
+outputs-examples/
+
+# Private changelogs
+**/CHANGELOG.json
+
+# Private zip
+**/*.zip

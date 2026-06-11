@@ -1,0 +1,317 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "synthesize_papers_prisma",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "prisma_flow",
+    "eligibility_criteria_inferred",
+    "study_characteristics",
+    "risk_of_bias_assessment",
+    "heterogeneity_assessment",
+    "results_by_outcome",
+    "certainty_of_evidence",
+    "research_gaps",
+    "implications_for_research",
+    "implications_for_practice",
+    "narrative_synthesis"
+  ],
+  "properties": {
+    "prisma_flow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identified",
+        "screened",
+        "eligibility_assessed",
+        "included",
+        "exclusion_reasons"
+      ],
+      "properties": {
+        "identified": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "screened": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "eligibility_assessed": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "included": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exclusion_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 200
+          }
+        }
+      }
+    },
+    "eligibility_criteria_inferred": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": {
+        "type": "string",
+        "minLength": 5,
+        "maxLength": 250
+      }
+    },
+    "study_characteristics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total_studies",
+        "date_range",
+        "geographic_coverage",
+        "study_designs",
+        "sample_size_patterns",
+        "disciplinary_distribution"
+      ],
+      "properties": {
+        "total_studies": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "date_range": {
+          "type": "string"
+        },
+        "geographic_coverage": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100
+          }
+        },
+        "study_designs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120
+          }
+        },
+        "sample_size_patterns": {
+          "type": "string"
+        },
+        "disciplinary_distribution": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120
+          }
+        }
+      }
+    },
+    "risk_of_bias_assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "overall_risk",
+        "sources_of_bias",
+        "justification"
+      ],
+      "properties": {
+        "overall_risk": {
+          "type": "string",
+          "enum": [
+            "faible",
+            "modéré",
+            "élevé",
+            "non évaluable"
+          ]
+        },
+        "sources_of_bias": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 12,
+          "items": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 120
+          }
+        },
+        "justification": {
+          "type": "string",
+          "minLength": 30,
+          "maxLength": 1500
+        }
+      }
+    },
+    "heterogeneity_assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "methodological_variation",
+        "outcome_variation",
+        "conceptual_variation"
+      ],
+      "properties": {
+        "methodological_variation": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 800
+        },
+        "outcome_variation": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 800
+        },
+        "conceptual_variation": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 800
+        }
+      }
+    },
+    "results_by_outcome": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 25,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "outcome",
+          "direction_of_effect",
+          "consistency_across_studies",
+          "strength_of_evidence"
+        ],
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 180
+          },
+          "direction_of_effect": {
+            "type": "string",
+            "enum": [
+              "positif",
+              "négatif",
+              "mixte",
+              "neutre"
+            ]
+          },
+          "consistency_across_studies": {
+            "type": "string",
+            "enum": [
+              "élevée",
+              "modérée",
+              "faible"
+            ]
+          },
+          "strength_of_evidence": {
+            "type": "string",
+            "enum": [
+              "faible",
+              "modéré",
+              "fort"
+            ]
+          }
+        }
+      }
+    },
+    "certainty_of_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level",
+        "justification"
+      ],
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "faible",
+            "modéré",
+            "élevé"
+          ]
+        },
+        "justification": {
+          "type": "string",
+          "minLength": 30,
+          "maxLength": 1200
+        }
+      }
+    },
+    "research_gaps": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 15,
+      "items": {
+        "type": "string",
+        "minLength": 5,
+        "maxLength": 250
+      }
+    },
+    "implications_for_research": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 12,
+      "items": {
+        "type": "string",
+        "minLength": 5,
+        "maxLength": 250
+      }
+    },
+    "implications_for_practice": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 12,
+      "items": {
+        "type": "string",
+        "minLength": 5,
+        "maxLength": 250
+      }
+    },
+    "narrative_synthesis": {
+      "type": "string",
+      "minLength": 200,
+      "maxLength": 9000
+    }
+  }
+}

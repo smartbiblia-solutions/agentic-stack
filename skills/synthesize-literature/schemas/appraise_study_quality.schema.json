@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "appraise_study_quality",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "study_design_identified",
+    "methodological_rigor",
+    "internal_validity",
+    "external_validity",
+    "reporting_quality",
+    "overall_risk_of_bias",
+    "strength_of_evidence",
+    "major_limitations_identified",
+    "confidence_in_inclusion",
+    "justification"
+  ],
+  "properties": {
+    "study_design_identified": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 250
+        }
+      ]
+    },
+    "methodological_rigor": {
+      "type": "string",
+      "enum": [
+        "faible",
+        "modéré",
+        "élevé",
+        "non évaluable"
+      ]
+    },
+    "internal_validity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selection_bias_risk",
+        "measurement_bias_risk",
+        "confounding_risk",
+        "analysis_transparency"
+      ],
+      "properties": {
+        "selection_bias_risk": {
+          "type": "string",
+          "enum": [
+            "faible",
+            "modéré",
+            "élevé",
+            "non évaluable"
+          ]
+        },
+        "measurement_bias_risk": {
+          "type": "string",
+          "enum": [
+            "faible",
+            "modéré",
+            "élevé",
+            "non évaluable"
+          ]
+        },
+        "confounding_risk": {
+          "type": "string",
+          "enum": [
+            "faible",
+            "modéré",
+            "élevé",
+            "non évaluable"
+          ]
+        },
+        "analysis_transparency": {
+          "type": "string",
+          "enum": [
+            "faible",
+            "modéré",
+            "élevé",
+            "non évaluable"
+          ]
+        }
+      }
+    },
+    "external_validity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generalizability",
+        "population_representativeness",
+        "context_dependency"
+      ],
+      "properties": {
+        "generalizability": {
+          "type": "string",
+          "enum": [
+            "faible",
+            "modéré",
+            "élevé",
+            "non évaluable"
+          ]
+        },
+        "population_representativeness": {
+          "type": "string",
+          "enum": [
+            "faible",
+            "modéré",
+            "élevé",
+            "non évaluable"
+          ]
+        },
+        "context_dependency": {
+          "type": "string",
+          "enum": [
+            "faible",
+            "modéré",
+            "élevé",
+            "non évaluable"
+          ]
+        }
+      }
+    },
+    "reporting_quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "methods_clarity",
+        "outcomes_clarity",
+        "replicability_potential"
+      ],
+      "properties": {
+        "methods_clarity": {
+          "type": "string",
+          "enum": [
+            "faible",
+            "modéré",
+            "élevé",
+            "non évaluable"
+          ]
+        },
+        "outcomes_clarity": {
+          "type": "string",
+          "enum": [
+            "faible",
+            "modéré",
+            "élevé",
+            "non évaluable"
+          ]
+        },
+        "replicability_potential": {
+          "type": "string",
+          "enum": [
+            "faible",
+            "modéré",
+            "élevé",
+            "non évaluable"
+          ]
+        }
+      }
+    },
+    "overall_risk_of_bias": {
+      "type": "string",
+      "enum": [
+        "faible",
+        "modéré",
+        "élevé",
+        "non évaluable"
+      ]
+    },
+    "strength_of_evidence": {
+      "type": "string",
+      "enum": [
+        "faible",
+        "modéré",
+        "élevé",
+        "non évaluable"
+      ]
+    },
+    "major_limitations_identified": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 12,
+      "items": {
+        "type": "string",
+        "minLength": 5,
+        "maxLength": 250
+      }
+    },
+    "confidence_in_inclusion": {
+      "type": "string",
+      "enum": [
+        "faible",
+        "modérée",
+        "élevée"
+      ]
+    },
+    "justification": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 2000
+    }
+  }
+}

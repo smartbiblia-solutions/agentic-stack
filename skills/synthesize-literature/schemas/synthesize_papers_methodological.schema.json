@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "synthesize_papers_methodological",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "methodology_map",
+    "dominant_paradigm",
+    "methodological_diversity_assessment",
+    "internal_validity_issues",
+    "external_validity_issues",
+    "reproducibility_concerns",
+    "methodological_gaps",
+    "emerging_methods",
+    "epistemological_trends",
+    "quality_assessment",
+    "narrative_synthesis"
+  ],
+  "properties": {
+    "methodology_map": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 15,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "approach",
+          "paradigm",
+          "papers",
+          "design_characteristics",
+          "analytical_strategies",
+          "strengths",
+          "limitations",
+          "robustness_of_evidence",
+          "relative_frequency"
+        ],
+        "properties": {
+          "approach": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 200
+          },
+          "paradigm": {
+            "type": "string",
+            "enum": [
+              "positiviste",
+              "interprétatif",
+              "constructiviste",
+              "computationnel",
+              "mixte",
+              "autre"
+            ]
+          },
+          "papers": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          "design_characteristics": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 900
+          },
+          "analytical_strategies": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 900
+          },
+          "strengths": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 900
+          },
+          "limitations": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 900
+          },
+          "robustness_of_evidence": {
+            "type": "string",
+            "enum": [
+              "faible",
+              "modéré",
+              "fort"
+            ]
+          },
+          "relative_frequency": {
+            "type": "string",
+            "enum": [
+              "rare",
+              "minoritaire",
+              "dominant"
+            ]
+          }
+        }
+      }
+    },
+    "dominant_paradigm": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 120
+    },
+    "methodological_diversity_assessment": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 1200
+    },
+    "internal_validity_issues": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 15,
+      "items": {
+        "type": "string",
+        "minLength": 5,
+        "maxLength": 250
+      }
+    },
+    "external_validity_issues": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 15,
+      "items": {
+        "type": "string",
+        "minLength": 5,
+        "maxLength": 250
+      }
+    },
+    "reproducibility_concerns": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 15,
+      "items": {
+        "type": "string",
+        "minLength": 5,
+        "maxLength": 250
+      }
+    },
+    "methodological_gaps": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 15,
+      "items": {
+        "type": "string",
+        "minLength": 5,
+        "maxLength": 250
+      }
+    },
+    "emerging_methods": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 15,
+      "items": {
+        "type": "string",
+        "minLength": 5,
+        "maxLength": 250
+      }
+    },
+    "epistemological_trends": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 1200
+    },
+    "quality_assessment": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 1200
+    },
+    "narrative_synthesis": {
+      "type": "string",
+      "minLength": 200,
+      "maxLength": 9000
+    }
+  }
+}

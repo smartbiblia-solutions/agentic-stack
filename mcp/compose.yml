@@ -1,0 +1,47 @@
+services:
+  mcp-openalex:
+    build:
+      context: ./openalex
+      dockerfile: Dockerfile
+    container_name: mcp-openalex
+    environment:
+      OPENALEX_API_KEY: ${OPENALEX_API_KEY}
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8011"
+      MCP_TRANSPORT: streamable-http
+    ports:
+      - "8011:8011"
+    restart: unless-stopped
+
+  mcp-sudoc-sru:
+    build:
+      context: ./sudoc-sru
+      dockerfile: Dockerfile
+    container_name: mcp-sudoc-sru
+    environment:
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8012"
+      MCP_TRANSPORT: streamable-http
+    ports:
+      - "8012:8012"
+    restart: unless-stopped
+    
+  mcp-primo:
+    build:
+      context: ./primo
+      dockerfile: Dockerfile
+    container_name: mcp-primo
+    environment:
+      PRIMO_API_KEY: ${PRIMO_API_KEY}
+      PRIMO_REGION: ${PRIMO_REGION:-na}
+      PRIMO_VID: ${PRIMO_VID}
+      PRIMO_TAB: ${PRIMO_TAB}
+      PRIMO_SCOPE: ${PRIMO_SCOPE}
+      PRIMO_INST: ${PRIMO_INST:-}
+      PRIMO_LANG: ${PRIMO_LANG:-en}
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8013"
+      MCP_TRANSPORT: streamable-http
+    ports:
+      - "8013:8013"
+    restart: unless-stopped

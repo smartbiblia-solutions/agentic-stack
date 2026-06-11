@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "screen_study_prisma",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "decision",
+    "confidence_level",
+    "picos_alignment",
+    "primary_exclusion_reason",
+    "justification",
+    "notes_for_full_text_review"
+  ],
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": [
+        "include",
+        "exclude",
+        "uncertain"
+      ]
+    },
+    "confidence_level": {
+      "type": "string",
+      "enum": [
+        "faible",
+        "modérée",
+        "élevée"
+      ]
+    },
+    "picos_alignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "population_match",
+        "intervention_or_exposure_match",
+        "outcome_match",
+        "study_design_match"
+      ],
+      "properties": {
+        "population_match": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "intervention_or_exposure_match": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome_match": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "study_design_match": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "primary_exclusion_reason": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "enum": [
+            "wrong_population",
+            "wrong_outcome",
+            "wrong_study_design",
+            "not_empirical",
+            "irrelevant_topic",
+            "insufficient_information",
+            "duplicate",
+            "outside_time_scope",
+            "outside_geographical_scope"
+          ]
+        }
+      ]
+    },
+    "justification": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 1200
+    },
+    "notes_for_full_text_review": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 1200
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "exclude"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "primary_exclusion_reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "primary_exclusion_reason"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "include"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "primary_exclusion_reason": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}
