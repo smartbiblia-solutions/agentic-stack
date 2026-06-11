@@ -42,7 +42,7 @@ See [rate limits & authentication](https://docs.openalex.org/how-to-use-the-api/
 
 ```bash
 git clone https://github.com/smartbiblia-solutions/agentic-stack.git
-cd agent-skills
+cd agentic-stack
 ```
 
 Start the server with the transport of your choice:

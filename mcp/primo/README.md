@@ -45,7 +45,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 
 ```bash
 git clone https://github.com/smartbiblia-solutions/agentic-stack.git
-cd agent-skills
+cd agentic-stack
 ```
 
 Start the server with the transport of your choice:
