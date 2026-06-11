@@ -19,7 +19,7 @@ resources, with holdings from all French universities.
 | `count_records` | Count results for a query without fetching records — useful for corpus sizing or query validation. |
 | `scan_index` | Browse an index alphabetically from a given term — useful for discovering normalised forms before writing a precise query. |
 
-The server is a single self-contained file, `server_mcp.py`, with inline
+The server is a single self-contained file, `mcp_server.py`, with inline
 [PEP 723](https://peps.python.org/pep-0723/) dependencies (`fastmcp`, `requests`)
 that [`uv`](https://docs.astral.sh/uv/) installs automatically on first run.
 
@@ -56,15 +56,15 @@ Start the server with the transport of your choice:
 
 ```bash
 # stdio — the client launches and manages the process
-uv run mcp/sudoc-sru/server_mcp.py --transport stdio
+uv run mcp/sudoc-sru/mcp_server.py --transport stdio
 
 # sse — persistent server, SSE endpoint
-uv run mcp/sudoc-sru/server_mcp.py \
+uv run mcp/sudoc-sru/mcp_server.py \
   --host 0.0.0.0 --port 8012 --transport sse
 # → endpoint: http://localhost:8012/sse
 
 # streamable-http — persistent server, HTTP endpoint (recommended for HTTP mode)
-uv run mcp/sudoc-sru/server_mcp.py \
+uv run mcp/sudoc-sru/mcp_server.py \
   --host 0.0.0.0 --port 8012 --transport streamable-http
 # → endpoint: http://localhost:8012/mcp
 ```
@@ -74,7 +74,7 @@ uv run mcp/sudoc-sru/server_mcp.py \
 ```bash
 # stdio (no persistent server needed — Claude Code manages the process)
 claude mcp add sudoc -- \
-  uv run /ABS/PATH/mcp/sudoc-sru/server_mcp.py --transport stdio
+  uv run /ABS/PATH/mcp/sudoc-sru/mcp_server.py --transport stdio
 
 # sse (start the server first with --transport sse)
 claude mcp add --transport sse sudoc http://localhost:8012/sse
@@ -99,7 +99,7 @@ or `%AppData%\Claude\claude_desktop_config.json` (Windows).
       "command": "uv",
       "args": [
         "run",
-        "/ABS/PATH/mcp/sudoc-sru/server_mcp.py",
+        "/ABS/PATH/mcp/sudoc-sru/mcp_server.py",
         "--transport", "stdio"
       ]
     }
@@ -120,7 +120,7 @@ or `%AppData%\Claude\claude_desktop_config.json` (Windows).
 ```
 
 On Windows, use escaped backslashes in the path:
-`"C:\\ABS\\PATH\\mcp\\sudoc-sru\\server_mcp.py"`.
+`"C:\\ABS\\PATH\\mcp\\sudoc-sru\\mcp_server.py"`.
 Restart Claude Desktop after saving; tools appear under the plug icon.
 
 ### 1.3 Cursor / VS Code / other `mcp.json` clients
@@ -133,7 +133,7 @@ Restart Claude Desktop after saving; tools appear under the plug icon.
     "sudoc": {
       "command": "uv",
       "args": [
-        "run", "/ABS/PATH/mcp/sudoc-sru/server_mcp.py",
+        "run", "/ABS/PATH/mcp/sudoc-sru/mcp_server.py",
         "--transport", "stdio"
       ]
     }
@@ -180,7 +180,7 @@ equivalent to Option 1 HTTP mode (just without cloning first).
 
 ```bash
 claude mcp add sudoc -- \
-  uv run https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/main/mcp/sudoc-sru/server_mcp.py \
+  uv run https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/main/mcp/sudoc-sru/mcp_server.py \
   --transport stdio
 ```
 
@@ -195,7 +195,7 @@ Check status: `claude mcp list` or `/mcp` inside a session.
       "command": "uv",
       "args": [
         "run",
-        "https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/main/mcp/sudoc-sru/server_mcp.py",
+        "https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/main/mcp/sudoc-sru/mcp_server.py",
         "--transport", "stdio"
       ]
     }
@@ -216,7 +216,7 @@ Restart Claude Desktop after saving; tools appear under the plug icon.
       "command": "uv",
       "args": [
         "run",
-        "https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/main/mcp/sudoc-sru/server_mcp.py",
+        "https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/main/mcp/sudoc-sru/mcp_server.py",
         "--transport", "stdio"
       ]
     }
@@ -240,7 +240,7 @@ Restart Claude Desktop after saving; tools appear under the plug icon.
 | `--jitter-max` | `0.25` | Max random jitter per retry in seconds. |
 | `--trace` | off | Include an HTTP trace log in every tool response. |
 
-See full reference: `uv run server_mcp.py --help`.
+See full reference: `uv run mcp_server.py --help`.
 
 ---
 
