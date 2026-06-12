@@ -12,8 +12,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 RUN uv pip install --system --no-cache "fastmcp>=2.0" "httpx"
 
 WORKDIR /app
-COPY server_mcp.py /app/server_mcp.py
+COPY mcp_server.py /app/mcp_server.py
 
 EXPOSE 8012
 
-ENTRYPOINT ["uv", "run", "/app/server_mcp.py"]
+ENTRYPOINT ["uv", "run", "/app/mcp_server.py"]
