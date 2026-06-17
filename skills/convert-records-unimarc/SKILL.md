@@ -59,18 +59,6 @@ when an agent must ingest a UNIMARC record in one format, transform it into a
 pivot representation, and emit an equivalent record in another format for
 storage, downstream processing, or interoperability.
 
-## When to use / When not to use
-
-Use this skill whenever the user provides UNIMARC record content or files and
-asks to convert between XML, JSON, and ISO 2709. It is the right choice for
-requests such as converting a single record, converting a batch file,
-normalizing XML before parsing, or exposing a machine-readable JSON pivot.
-
-Do not use it when:
-- The task is to search a library catalog, repository, or scholarly index.
-- The task is general-purpose XML editing without MARC/UNIMARC semantics.
-- The task is to synthesize, summarize, or analyze records after retrieval.
-
 ## Subcommands
 
 ### `convert` — convert records between formats
