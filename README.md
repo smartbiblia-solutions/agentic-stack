@@ -49,3 +49,7 @@ If you need to customize the behavior:
 Alternatively, advanced users can modify the default values directly in `cli.py`.
 
 Unless a skill requires API credentials, the provided defaults should be sufficient for most use cases.
+
+## Todo
+
+- Skill OpenAlex : rewrite by wrapping [openalex-cli](https://developers.openalex.org/download/openalex-cli)
