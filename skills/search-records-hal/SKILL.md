@@ -84,18 +84,6 @@ without transformation.
 
 ---
 
-## When to use / When not to use
-
-Use this skill when the task targets HAL specifically: French institutional
-deposits, lab collections, francophone preprints, or when BibTeX/TEI export
-is needed.
-
-For broad international scholarly coverage, use a general scholarly retrieval
-tool. This skill and international retrieval tools are complementary — run both
-and deduplicate on `doi` when comprehensive coverage is needed.
-
----
-
 ## Collection-first design
 
 Most HAL usage targets a specific collection (institution or lab portal).

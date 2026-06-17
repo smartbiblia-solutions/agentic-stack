@@ -55,19 +55,6 @@ Pipeline orchestration (what to do, in what order) is handled at the agent level
 
 ---
 
-## When to use / When not to use
-
-Use this skill for any post-retrieval step: screening a title/abstract,
-summarizing an included paper, extracting structured metadata, appraising
-study quality, or producing a synthesis.
-
-Each task can be used independently — you do not need to run the full pipeline
-to screen a single paper or produce a thematic synthesis from an existing corpus.
-
-Do not use it for retrieval or query design — those are separate pre-retrieval steps handled outside this skill.
-
----
-
 ## Logical skills exposed by this package
 
 These task identifiers can be addressed independently in the hub registry.

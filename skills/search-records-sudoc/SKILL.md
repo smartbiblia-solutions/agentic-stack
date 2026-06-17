@@ -41,6 +41,25 @@ tags:
 
 # Sudoc SRU Skill
 
+## When to use / When not to use
+
+**Use this skill when:**
+
+- The task targets French academic library holdings, union catalogue records, or institutional collections.
+- The user needs to find books, serials, theses, manuscripts, or documents held in French universities.
+- PPN or ISBN resolution is needed for French library records.
+- The task involves French academic theses (including electronic theses from the STAR corpus).
+- UNIMARC metadata or RAMEAU subject headings are required.
+- The user wants to know whether a document is held in French academic libraries.
+
+**Do not use this skill when:**
+
+- The task requires broad international scholarly literature.
+- The task targets French open-access preprints or institutional deposits.
+- DOI-based scholarly retrieval is the primary goal.
+
+---
+
 ## Overview
 
 `scripts/cli.py` is a self-contained CLI (runs with `uv run`) that wraps the
@@ -59,25 +78,6 @@ The Sudoc catalogue covers **bibliographic records and their holdings** across
 French higher education and research libraries. It contains books, serials,
 theses, manuscripts, maps, scores, audiovisual documents, and electronic
 resources. Data is in UNIMARC format (UTF-8).
-
----
-
-## When to use / When not to use
-
-**Use this skill when:**
-
-- The task targets French academic library holdings, union catalogue records, or institutional collections.
-- The user needs to find books, serials, theses, manuscripts, or documents held in French universities.
-- PPN or ISBN resolution is needed for French library records.
-- The task involves French academic theses (including electronic theses from the STAR corpus).
-- UNIMARC metadata or RAMEAU subject headings are required.
-- The user wants to know whether a document is held in French academic libraries.
-
-**Do not use this skill when:**
-
-- The task requires broad international scholarly literature.
-- The task targets French open-access preprints or institutional deposits.
-- DOI-based scholarly retrieval is the primary goal.
 
 ---
 

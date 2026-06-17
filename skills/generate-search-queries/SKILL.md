@@ -58,16 +58,6 @@ Output is strict JSON validated against a schema.
 
 ---
 
-## When to use / When not to use
-
-Use this skill at the **start** of any literature review or retrieval task,
-before running any database search.
-
-Do not use it if the user already has search terms and only needs to run a
-retrieval.
-
----
-
 ## CLI usage
 
 This skill exposes a single task. There is no `--task` flag.

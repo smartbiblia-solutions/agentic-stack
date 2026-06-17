@@ -44,6 +44,17 @@ tags:
 
 # search-works-openalex
 
+## When to use / When not to use
+
+Use this skill for any task involving discovery or retrieval of scholarly works,
+DOI resolution, citation graph exploration, or topic classification of academic text.
+
+Do not use it when:
+- The task concerns a library catalog or institutional holdings.
+- Papers have already been retrieved and the next step is appraisal or synthesis.
+
+---
+
 ## Purpose
 
 `scripts/cli.py` is a self-contained CLI (runs with `uv run`) that wraps the
@@ -65,17 +76,6 @@ This skill exposes four logical operations, each addressable independently:
 | `lookup-dois-openalex` | `batch-lookup-by-doi` | Resolve one or more DOIs to full metadata |
 | `get-citing-works-openalex` | `get-citing-works` | Find papers citing a specific work |
 | `classify-text-openalex` | `classify-text` | Classify a title or abstract by academic topic |
-
----
-
-## When to use / When not to use
-
-Use this skill for any task involving discovery or retrieval of scholarly works,
-DOI resolution, citation graph exploration, or topic classification of academic text.
-
-Do not use it when:
-- The task concerns a library catalog or institutional holdings.
-- Papers have already been retrieved and the next step is appraisal or synthesis.
 
 ---
 
