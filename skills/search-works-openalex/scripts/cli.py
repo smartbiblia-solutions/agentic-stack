@@ -4,38 +4,28 @@
 # dependencies = ['httpx', 'python-dotenv']
 # ///
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Standalone skill CLI file.
-# ──────────────────────────────────────────────────────────────────────────────
+"""
+Connecteur OpenAlex — CLI autonome.
+Base mondiale de publications académiques : https://docs.openalex.org
+
+Quatre sous-commandes : search, batch-lookup-by-doi, get-citing-works,
+classify-text. Sortie : JSON strict sur stdout, code de sortie toujours 0 —
+les erreurs remontent dans le champ `error`.
+
+Variable d'environnement :
+  OPENALEX_API_KEY   (optionnel — « polite pool », limites de taux plus hautes)
+
+Le délai d'attente, le nombre de tentatives et le backoff sont des constantes
+ci-dessous : ce sont des propriétés du connecteur, pas de l'installation.
+"""
 
 from __future__ import annotations
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION : core
-# ══════════════════════════════════════════════════════════════════════════════
-
-"""
-Connector OpenAlex — Serveur MCP autonome
-Base mondiale de publications académiques : https://docs.openalex.org
-
-Pluggable sur n'importe quel hôte MCP.
-
-Variables d'environnement :
-  OPENALEX_API_KEY           (optionnel selon policy OpenAlex / vos quotas)
-
-  # Robustesse / perf (recommandé pour usage agentique)
-  OPENALEX_HTTP_TIMEOUT      (float, défaut 15.0)
-  OPENALEX_MAX_RETRIES       (int, défaut 2)
-  OPENALEX_BACKOFF_BASE      (float, défaut 1.0)    # seconds
-  OPENALEX_BACKOFF_FACTOR    (float, défaut 2.0)    # multiplier
-  OPENALEX_JITTER_MAX        (float, défaut 0.25)  # seconds random jitter added on retry
-  OPENALEX_TRACE             ("0"|"1", défaut "0")  # inclure un journal d'exécution dans les retours
-"""
-
-
-import asyncio
+import argparse
+import json
 import os
 import random
+import sys
 import time
 from typing import Any
 
@@ -50,36 +40,18 @@ OPENALEX_AUTHORS = f"{OPENALEX_BASE}/authors"
 OPENALEX_INSTITUTIONS = f"{OPENALEX_BASE}/institutions"
 OPENALEX_TEXT = f"{OPENALEX_BASE}/text"
 
-API_KEY = os.getenv("OPENALEX_API_KEY", "")
+API_KEY = os.getenv("OPENALEX_API_KEY", "").strip()
 
-# ---- Env-tunable networking knobs (agent-friendly defaults) -----------------
+HTTP_TIMEOUT = 15.0
+MAX_RETRIES = 3
+BACKOFF_BASE = 1.0
+BACKOFF_FACTOR = 2.0
+JITTER_MAX = 0.25
+RETRIED_STATUS = {429, 403, 500, 502, 503, 504}
 
-def _env_float(name: str, default: float) -> float:
-    """Read a float environment variable with a safe default fallback."""
-    v = os.getenv(name, "").strip()
-    if not v:
-        return default
-    try:
-        return float(v)
-    except ValueError:
-        return default
-
-def _env_int(name: str, default: int) -> int:
-    """Read an integer environment variable with a safe default fallback."""
-    v = os.getenv(name, "").strip()
-    if not v:
-        return default
-    try:
-        return int(v)
-    except ValueError:
-        return default
-
-HTTP_TIMEOUT = _env_float("OPENALEX_HTTP_TIMEOUT", 15.0)
-MAX_RETRIES = max(1, _env_int("OPENALEX_MAX_RETRIES", 2))
-BACKOFF_BASE = max(0.0, _env_float("OPENALEX_BACKOFF_BASE", 1.0))
-BACKOFF_FACTOR = max(1.0, _env_float("OPENALEX_BACKOFF_FACTOR", 2.0))
-JITTER_MAX = max(0.0, _env_float("OPENALEX_JITTER_MAX", 0.25))
-TRACE_DEFAULT = os.getenv("OPENALEX_TRACE", "0").strip() in ("1", "true", "True", "yes", "YES")
+# Un seul client poolé pour le processus : httpx.get() reconstruirait le client
+# — et rejouerait la poignée de main TLS — à chaque appel.
+HTTP = httpx.Client(timeout=HTTP_TIMEOUT, follow_redirects=True)
 
 SELECT_FIELDS = ",".join([
     "id", "title", "authorships", "abstract_inverted_index",
@@ -90,128 +62,41 @@ SELECT_FIELDS = ",".join([
 ])
 
 
-# ── HTTP client avec retry / backoff (instrumentable) ────────────────────────
+# ── Client HTTP ───────────────────────────────────────────────────────────────
 
-def _should_retry(status_code: int) -> bool:
-    """Return True when the HTTP status should trigger a retry."""
-    return status_code in (429, 403, 500, 502, 503, 504)
+def _with_key(params: dict[str, Any]) -> dict[str, Any]:
+    """Ajoute la clé API si elle est configurée. Une clé vide envoyée en
+    paramètre est rejetée par OpenAlex : on l'omet plutôt."""
+    return {**params, "api_key": API_KEY} if API_KEY else dict(params)
 
-def _backoff_sleep_seconds(attempt: int) -> float:
-    """Compute exponential backoff delay with optional random jitter."""
-    base = BACKOFF_BASE * (BACKOFF_FACTOR ** attempt)
-    jitter = random.uniform(0.0, JITTER_MAX) if JITTER_MAX > 0 else 0.0
-    return base + jitter
 
-async def _get_with_backoff(
-    url: str,
-    params: dict,
-    *,
-    max_retries: int | None = None,
-    timeout: float | None = None,
-    trace: bool = True,
-) -> tuple[dict, list[dict]]:
-    """
-    Execute a GET request with retries, timeout control, and optional trace logs.
-    Returns a tuple: (response_json, trace_events).
-    """
-    max_retries = MAX_RETRIES if max_retries is None else max(1, int(max_retries))
-    timeout = HTTP_TIMEOUT if timeout is None else float(timeout)
+def _sleep(attempt: int) -> None:
+    delay = BACKOFF_BASE * (BACKOFF_FACTOR ** (attempt - 1))
+    time.sleep(delay + random.uniform(0.0, JITTER_MAX))
 
-    trace_events: list[dict] = []
-    started = time.perf_counter()
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        last_status: int | None = None
-        last_error: str | None = None
-
-        for attempt in range(max_retries):
-            t0 = time.perf_counter()
-            try:
-                if trace:
-                    trace_events.append({
-                        "event": "http_request",
-                        "method": "GET",
-                        "url": url,
-                        "attempt": attempt + 1,
-                        "max_retries": max_retries,
-                        "timeout_s": timeout,
-                        "params": params,
-                    })
-
-                resp = await client.get(url, params=params)
-                last_status = resp.status_code
-
-                if trace:
-                    trace_events.append({
-                        "event": "http_response",
-                        "status_code": resp.status_code,
-                        "attempt": attempt + 1,
-                        "elapsed_ms": int((time.perf_counter() - t0) * 1000),
-                    })
-
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if trace:
-                        trace_events.append({
-                            "event": "http_success",
-                            "attempt": attempt + 1,
-                            "total_elapsed_ms": int((time.perf_counter() - started) * 1000),
-                        })
-                    return data, trace_events
-
-                if _should_retry(resp.status_code) and attempt < max_retries - 1:
-                    sleep_s = _backoff_sleep_seconds(attempt)
-                    if trace:
-                        trace_events.append({
-                            "event": "http_retry_sleep",
-                            "status_code": resp.status_code,
-                            "attempt": attempt + 1,
-                            "sleep_s": round(sleep_s, 3),
-                        })
-                    await asyncio.sleep(sleep_s)
-                    continue
-
-                resp.raise_for_status()
-
-            except httpx.TimeoutException as e:
-                last_error = f"timeout: {e}"
-                if trace:
-                    trace_events.append({
-                        "event": "http_timeout",
-                        "attempt": attempt + 1,
-                        "elapsed_ms": int((time.perf_counter() - t0) * 1000),
-                        "message": str(e),
-                    })
-                if attempt < max_retries - 1:
-                    sleep_s = _backoff_sleep_seconds(attempt)
-                    if trace:
-                        trace_events.append({
-                            "event": "http_retry_sleep",
-                            "reason": "timeout",
-                            "attempt": attempt + 1,
-                            "sleep_s": round(sleep_s, 3),
-                        })
-                    await asyncio.sleep(sleep_s)
-                    continue
+def get_json(url: str, params: dict[str, Any] | None = None) -> dict:
+    """GET avec retry sur les statuts transitoires. Lève en dernier ressort."""
+    params = _with_key(params or {})
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = HTTP.get(url, params=params)
+            if resp.status_code in RETRIED_STATUS and attempt < MAX_RETRIES:
+                _sleep(attempt)
+                continue
+            resp.raise_for_status()
+            return resp.json()
+        except (httpx.TimeoutException, httpx.TransportError):
+            if attempt == MAX_RETRIES:
                 raise
-
-            except httpx.HTTPError as e:
-                last_error = f"http_error: {e}"
-                if trace:
-                    trace_events.append({
-                        "event": "http_error",
-                        "attempt": attempt + 1,
-                        "message": str(e),
-                    })
-                raise
-
-        raise RuntimeError(f"OpenAlex : échec après {max_retries} tentatives sur {url} (status={last_status}, error={last_error})")
+            _sleep(attempt)
+    raise RuntimeError(f"OpenAlex : échec après {MAX_RETRIES} tentatives sur {url}")
 
 
 # ── Formatage ─────────────────────────────────────────────────────────────────
 
 def _reconstruct_abstract(inverted_index: dict | None) -> str | None:
-    """Rebuild plain-text abstract from OpenAlex inverted index format."""
+    """Reconstruit le résumé en clair depuis l'index inversé d'OpenAlex."""
     if not inverted_index:
         return None
     try:
@@ -225,7 +110,7 @@ def _reconstruct_abstract(inverted_index: dict | None) -> str | None:
 
 
 def _format_result(work: dict) -> dict:
-    """Normalize a raw OpenAlex work payload into the project response schema."""
+    """Normalise une notice OpenAlex brute vers le schéma commun du corpus."""
     authors = []
     author_details = []
     for a in work.get("authorships", []):
@@ -252,7 +137,7 @@ def _format_result(work: dict) -> dict:
 
     return {
         "source": "openalex",
-        # Canonical cross-skill keys expected by the literature-review-agent.
+        # Clés canoniques attendues par les autres skills du corpus.
         "id": openalex_id,
         "openalex_id": openalex_id,
         "title": work.get("title"),
@@ -280,57 +165,47 @@ def _format_result(work: dict) -> dict:
     }
 
 
-# ── Résolution d'IDs (pattern 2 étapes recommandé) ───────────────────────────
+# ── Résolution d'identifiants (pattern en deux étapes) ───────────────────────
 
-async def _resolve_author_id(name_or_orcid: str, *, trace: bool = False) -> tuple[str | None, list[dict]]:
-    """Resolve an author name or ORCID into an OpenAlex author identifier."""
-    t: list[dict] = []
+def _resolve_author_id(name_or_orcid: str) -> str | None:
+    """Résout un nom d'auteur ou un ORCID en identifiant OpenAlex."""
     if "orcid.org" in name_or_orcid or name_or_orcid.startswith("0000-"):
         orcid = (
             name_or_orcid if name_or_orcid.startswith("https://")
             else f"https://orcid.org/{name_or_orcid}"
         )
         try:
-            data, t2 = await _get_with_backoff(f"{OPENALEX_BASE}/authors/{orcid}", {"api_key": API_KEY}, trace=trace)
-            t.extend(t2)
-            return (data.get("id", "").replace("https://openalex.org/", "") or None), t
+            data = get_json(f"{OPENALEX_AUTHORS}/{orcid}")
         except Exception:
-            return None, t
+            return None
+        return (data.get("id", "") or "").replace("https://openalex.org/", "") or None
 
-    data, t2 = await _get_with_backoff(
-        OPENALEX_AUTHORS,
-        {"search": name_or_orcid, "per-page": 1, "api_key": API_KEY},
-        trace=trace,
-    )
-    t.extend(t2)
+    data = get_json(OPENALEX_AUTHORS, {"search": name_or_orcid, "per-page": 1})
     results = data.get("results", [])
-    resolved = (results[0].get("id") or "").replace("https://openalex.org/", "") if results else ""
-    return (resolved or None), t
+    if not results:
+        return None
+    return (results[0].get("id") or "").replace("https://openalex.org/", "") or None
 
 
-async def _resolve_institution_id(name_or_ror: str, *, trace: bool = False) -> tuple[str | None, list[dict]]:
-    """Resolve an institution name or ROR URL into an OpenAlex institution ID."""
-    t: list[dict] = []
+def _resolve_institution_id(name_or_ror: str) -> str | None:
+    """Résout un nom d'institution ou une URL ROR en identifiant OpenAlex."""
     if "ror.org" in name_or_ror:
         try:
-            data, t2 = await _get_with_backoff(f"{OPENALEX_BASE}/institutions/{name_or_ror}", {"api_key": API_KEY}, trace=trace)
-            t.extend(t2)
-            return (data.get("id", "").replace("https://openalex.org/", "") or None), t
+            data = get_json(f"{OPENALEX_INSTITUTIONS}/{name_or_ror}")
         except Exception:
-            return None, t
+            return None
+        return (data.get("id", "") or "").replace("https://openalex.org/", "") or None
 
-    data, t2 = await _get_with_backoff(
-        OPENALEX_INSTITUTIONS,
-        {"search": name_or_ror, "per-page": 1, "api_key": API_KEY},
-        trace=trace,
-    )
-    t.extend(t2)
+    data = get_json(OPENALEX_INSTITUTIONS, {"search": name_or_ror, "per-page": 1})
     results = data.get("results", [])
-    resolved = (results[0].get("id") or "").replace("https://openalex.org/", "") if results else ""
-    return (resolved or None), t
+    if not results:
+        return None
+    return (results[0].get("id") or "").replace("https://openalex.org/", "") or None
 
 
-async def search(
+# ── Opérations ────────────────────────────────────────────────────────────────
+
+def search(
     query: str,
     max_results: int = 15,
     date_from: str | None = None,
@@ -339,15 +214,8 @@ async def search(
     sort_by: str = "publication_date:desc",
     author: str | None = None,
     institution: str | None = None,
-    *,
-    trace: bool | None = None,
-    http_timeout: float | None = None,
-    max_retries: int | None = None,
 ) -> dict:
-    """Search OpenAlex works with optional date, OA, author, and institution filters."""
-    trace_effective = TRACE_DEFAULT if trace is None else bool(trace)
-    trace_events: list[dict] = []
-
+    """Recherche de travaux, avec filtres date / accès ouvert / auteur / institution."""
     filters = []
     if date_from:
         filters.append(f"from_publication_date:{date_from}")
@@ -357,78 +225,46 @@ async def search(
         filters.append("is_oa:true")
 
     if author:
-        author_id, t = await _resolve_author_id(author, trace=trace_effective)
-        trace_events.extend(t)
-        if author_id:
-            filters.append(f"authorships.author.id:{author_id}")
-        else:
-            out = {"total_found": 0, "returned": 0, "results": [],
-                   "error": f"Auteur introuvable dans OpenAlex : '{author}'",
-                   "query_used": query, "filters_used": filters}
-            if trace_effective:
-                out["trace"] = trace_events
-            return out
+        author_id = _resolve_author_id(author)
+        if not author_id:
+            return {"total_found": 0, "returned": 0, "results": [],
+                    "error": f"Auteur introuvable dans OpenAlex : '{author}'",
+                    "query_used": query, "filters_used": filters}
+        filters.append(f"authorships.author.id:{author_id}")
 
     if institution:
-        inst_id, t = await _resolve_institution_id(institution, trace=trace_effective)
-        trace_events.extend(t)
-        if inst_id:
-            filters.append(f"authorships.institutions.id:{inst_id}")
-        else:
-            out = {"total_found": 0, "returned": 0, "results": [],
-                   "error": f"Institution introuvable dans OpenAlex : '{institution}'",
-                   "query_used": query, "filters_used": filters}
-            if trace_effective:
-                out["trace"] = trace_events
-            return out
+        inst_id = _resolve_institution_id(institution)
+        if not inst_id:
+            return {"total_found": 0, "returned": 0, "results": [],
+                    "error": f"Institution introuvable dans OpenAlex : '{institution}'",
+                    "query_used": query, "filters_used": filters}
+        filters.append(f"authorships.institutions.id:{inst_id}")
 
     params: dict[str, Any] = {
         "search": query,
         "per-page": min(max_results, 200),
         "sort": sort_by,
         "select": SELECT_FIELDS,
-        "api_key": API_KEY,
     }
     if filters:
         params["filter"] = ",".join(filters)
 
-    data, t = await _get_with_backoff(
-        OPENALEX_WORKS,
-        params,
-        max_retries=max_retries,
-        timeout=http_timeout,
-        trace=trace_effective,
-    )
-    trace_events.extend(t)
+    data = get_json(OPENALEX_WORKS, params)
     results = data.get("results", [])
-    out = {
+    return {
         "total_found": data.get("meta", {}).get("count", 0),
         "returned": len(results),
         "results": [_format_result(r) for r in results],
         "query_used": query,
         "filters_used": filters,
+        "error": None,
     }
-    if trace_effective:
-        out["trace"] = trace_events
-    return out
 
 
-async def batch_lookup_by_doi(
-    dois: list[str],
-    *,
-    trace: bool | None = None,
-    http_timeout: float | None = None,
-    max_retries: int | None = None,
-) -> dict:
-    """Resolve one or more DOIs and return normalized OpenAlex work records."""
-    trace_effective = TRACE_DEFAULT if trace is None else bool(trace)
-    trace_events: list[dict] = []
-
+def batch_lookup_by_doi(dois: list[str]) -> dict:
+    """Résout une liste de DOI en notices normalisées (lots de 50)."""
     if not dois:
-        out = {"total_found": 0, "returned": 0, "results": []}
-        if trace_effective:
-            out["trace"] = trace_events
-        return out
+        return {"total_found": 0, "returned": 0, "results": [], "error": None}
 
     all_results = []
     for i in range(0, len(dois), 50):
@@ -437,101 +273,50 @@ async def batch_lookup_by_doi(
             d if d.startswith("https://doi.org/") else f"https://doi.org/{d}"
             for d in batch
         ]
-        params = {
+        data = get_json(OPENALEX_WORKS, {
             "filter": "doi:" + "|".join(normalized),
             "per-page": len(batch),
             "select": SELECT_FIELDS,
-            "api_key": API_KEY,
-        }
-        data, t = await _get_with_backoff(
-            OPENALEX_WORKS,
-            params,
-            max_retries=max_retries,
-            timeout=http_timeout,
-            trace=trace_effective,
-        )
-        trace_events.extend(t)
+        })
         all_results.extend(data.get("results", []))
         if i + 50 < len(dois):
-            await asyncio.sleep(0.15)
+            time.sleep(0.15)
 
-    out = {
+    return {
         "total_found": len(all_results),
         "returned": len(all_results),
         "results": [_format_result(r) for r in all_results],
+        "error": None,
     }
-    if trace_effective:
-        out["trace"] = trace_events
-    return out
 
 
-async def get_citing_works(
-    openalex_id: str,
-    max_results: int = 20,
-    *,
-    trace: bool | None = None,
-    http_timeout: float | None = None,
-    max_retries: int | None = None,
-) -> dict:
-    """Fetch works that cite a given OpenAlex work ID."""
-    trace_effective = TRACE_DEFAULT if trace is None else bool(trace)
-    trace_events: list[dict] = []
-
+def get_citing_works(openalex_id: str, max_results: int = 20) -> dict:
+    """Retourne les travaux qui citent un travail donné, les plus cités d'abord."""
     clean_id = openalex_id.replace("https://openalex.org/", "")
-    params = {
+    data = get_json(OPENALEX_WORKS, {
         "filter": f"cites:{clean_id}",
         "per-page": min(max_results, 200),
         "sort": "cited_by_count:desc",
         "select": SELECT_FIELDS,
-        "api_key": API_KEY,
-    }
-    data, t = await _get_with_backoff(
-        OPENALEX_WORKS,
-        params,
-        max_retries=max_retries,
-        timeout=http_timeout,
-        trace=trace_effective,
-    )
-    trace_events.extend(t)
+    })
     results = data.get("results", [])
-    out = {
+    return {
         "total_found": data.get("meta", {}).get("count", 0),
         "returned": len(results),
         "results": [_format_result(r) for r in results],
         "cited_work_id": clean_id,
+        "error": None,
     }
-    if trace_effective:
-        out["trace"] = trace_events
-    return out
 
 
-async def classify_text(
-    text: str,
-    *,
-    trace: bool | None = None,
-    http_timeout: float | None = None,
-    max_retries: int | None = None,
-) -> dict:
-    """Classify input text using OpenAlex topic and keyword enrichment endpoint."""
-    trace_effective = TRACE_DEFAULT if trace is None else bool(trace)
-    trace_events: list[dict] = []
-
+def classify_text(text: str) -> dict:
+    """Classe un titre ou un résumé via l'endpoint /text d'OpenAlex."""
     text = text.strip()
     if len(text) < 20:
-        out = {"error": "Texte trop court (minimum 20 caractères)"}
-        if trace_effective:
-            out["trace"] = trace_events
-        return out
+        return {"topics": [], "keywords": [], "error": "Texte trop court (minimum 20 caractères)"}
 
-    data, t = await _get_with_backoff(
-        OPENALEX_TEXT,
-        {"title": text[:2000], "api_key": API_KEY},
-        max_retries=max_retries,
-        timeout=http_timeout,
-        trace=trace_effective,
-    )
-    trace_events.extend(t)
-    out = {
+    data = get_json(OPENALEX_TEXT, {"title": text[:2000]})
+    return {
         "topics": [
             {
                 "name": t.get("display_name"),
@@ -542,32 +327,25 @@ async def classify_text(
             for t in data.get("topics", [])
         ],
         "keywords": [k.get("display_name") for k in data.get("keywords", [])],
+        "error": None,
     }
-    if trace_effective:
-        out["trace"] = trace_events
-    return out
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION : facade
-# ══════════════════════════════════════════════════════════════════════════════
 
-import argparse
-import asyncio
-import json
-
+# ── Façade CLI ────────────────────────────────────────────────────────────────
 
 def _print(data: object) -> int:
-    print(json.dumps(data, ensure_ascii=False, indent=2))
+    json.dump(data, sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
     return 0
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(prog="openalex")
-
+    ap = argparse.ArgumentParser(
+        prog="openalex", description="Recherche et analyse de publications via OpenAlex."
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    ap_s = sub.add_parser("search")
-    ap_s.add_argument("--trace", action="store_true", help="Include execution trace in JSON output")
+    ap_s = sub.add_parser("search", help="Recherche plein texte de travaux")
     ap_s.add_argument("--query", required=True)
     ap_s.add_argument("--max-results", type=int, default=15)
     ap_s.add_argument("--date-from", default=None)
@@ -577,28 +355,23 @@ def main() -> int:
     ap_s.add_argument("--author", default=None)
     ap_s.add_argument("--institution", default=None)
 
-    ap_b = sub.add_parser("batch-lookup-by-doi")
-    ap_b.add_argument("--trace", action="store_true", help="Include execution trace in JSON output")
-    ap_b.add_argument("--doi", action="append", default=[], help="Repeatable")
-    ap_b.add_argument("--doi-file", default=None, help="Text file with one DOI per line")
+    ap_b = sub.add_parser("batch-lookup-by-doi", help="Résout un ou plusieurs DOI")
+    ap_b.add_argument("--doi", action="append", default=[], help="Répétable")
+    ap_b.add_argument("--doi-file", default=None, help="Fichier texte, un DOI par ligne")
 
-    ap_c = sub.add_parser("get-citing-works")
-    ap_c.add_argument("--trace", action="store_true", help="Include execution trace in JSON output")
+    ap_c = sub.add_parser("get-citing-works", help="Travaux citant un travail donné")
     ap_c.add_argument("--openalex-id", required=True)
     ap_c.add_argument("--max-results", type=int, default=20)
 
-    ap_t = sub.add_parser("classify-text")
-    ap_t.add_argument("--trace", action="store_true", help="Include execution trace in JSON output")
+    ap_t = sub.add_parser("classify-text", help="Classe un texte par thématique")
     ap_t.add_argument("--text", default=None)
     ap_t.add_argument("--file", default=None)
 
     args = ap.parse_args()
 
-    common = {"trace": bool(getattr(args, "trace", False))}
-
-    if args.cmd == "search":
-        data = asyncio.run(
-            search(
+    try:
+        if args.cmd == "search":
+            return _print(search(
                 query=args.query,
                 max_results=args.max_results,
                 date_from=args.date_from,
@@ -607,30 +380,27 @@ def main() -> int:
                 sort_by=args.sort_by,
                 author=args.author,
                 institution=args.institution,
-                **common,
-            )
-        )
-        return _print(data)
+            ))
 
-    if args.cmd == "batch-lookup-by-doi":
-        dois = list(args.doi or [])
-        if args.doi_file:
-            with open(args.doi_file, "r", encoding="utf-8") as f:
-                dois.extend([ln.strip() for ln in f if ln.strip()])
-        data = asyncio.run(batch_lookup_by_doi(dois, **common))
-        return _print(data)
+        if args.cmd == "batch-lookup-by-doi":
+            dois = list(args.doi or [])
+            if args.doi_file:
+                with open(args.doi_file, "r", encoding="utf-8") as f:
+                    dois.extend([ln.strip() for ln in f if ln.strip()])
+            return _print(batch_lookup_by_doi(dois))
 
-    if args.cmd == "get-citing-works":
-        data = asyncio.run(get_citing_works(openalex_id=args.openalex_id, max_results=args.max_results, **common))
-        return _print(data)
+        if args.cmd == "get-citing-works":
+            return _print(get_citing_works(args.openalex_id, args.max_results))
 
-    if args.cmd == "classify-text":
-        text = (args.text or "").strip()
-        if not text and args.file:
-            with open(args.file, "r", encoding="utf-8") as f:
-                text = f.read().strip()
-        data = asyncio.run(classify_text(text, **common))
-        return _print(data)
+        if args.cmd == "classify-text":
+            text = (args.text or "").strip()
+            if not text and args.file:
+                with open(args.file, "r", encoding="utf-8") as f:
+                    text = f.read().strip()
+            return _print(classify_text(text))
+    except Exception as exc:
+        # Contrat du corpus : l'erreur est une donnée, pas un code de sortie.
+        return _print({"total_found": 0, "returned": 0, "results": [], "error": str(exc)})
 
     return 2
 

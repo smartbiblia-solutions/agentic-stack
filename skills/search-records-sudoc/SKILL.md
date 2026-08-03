@@ -14,21 +14,36 @@ description: >
   Also use it when the user wants to know whether a document is held in
   French academic libraries, or needs UNIMARC metadata for a French
   publication.
+version: "0.2.0"
+author: smartbiblia
+maturity: stable
+preferred_output: json
 metadata:
   {
-    "version": "0.1.0",
-    "author": "smartbiblia",
-    "maturity": "stable",
-    "preferred_output": "json",
-    "openclaw":
-      {
-        "always": true, "requires": { "bins": ["uv"], "env": ["SUDOC_HTTP_TIMEOUT", "SUDOC_MAX_RETRIES", "SUDOC_TRACE"], "config": [] },
-      },
-	"nanobot":
-      {
-        "always": true, "requires": { "bins": ["uv"], "env": ["SUDOC_HTTP_TIMEOUT", "SUDOC_MAX_RETRIES", "SUDOC_TRACE"] },
-      },
+    "openclaw": {
+      "always": true,
+      "requires": { "bins": ["uv"], "env": [], "config": [] }
+    }
   }
+
+selection:
+  use_when:
+    - The task targets French academic library holdings or union catalogue records.
+    - The user needs books, serials, theses, manuscripts, or documents held in French universities.
+    - A PPN or an ISBN must be resolved to a full bibliographic record.
+    - The task involves French academic theses, including electronic theses from the STAR corpus.
+    - UNIMARC metadata or RAMEAU subject headings are required.
+  avoid_when:
+    - The task requires broad international scholarly literature; use search-works-openalex.
+    - The task targets French open-access preprints or lab deposits; use search-records-hal.
+    - DOI-based scholarly retrieval is the primary goal.
+  prefer_over:
+    - generic-web-search
+  combine_with:
+    - generate-search-queries
+    - convert-records-unimarc
+    - resolve-persons-idref
+    - search-authorities-idref
 
 tags:
   - sudoc
@@ -39,7 +54,26 @@ tags:
   - theses
 ---
 
-# Sudoc SRU Skill
+# search-records-sudoc
+
+## Purpose
+
+`scripts/cli.py` is a self-contained CLI (runs with `uv run`) that wraps the
+[Sudoc SRU service](https://www.sudoc.abes.fr/cbs/sru/) maintained by
+[ABES](https://abes.fr). It exposes five subcommands — `search`,
+`lookup-by-ppn`, `lookup-by-isbn`, `count`, `scan` — and emits **strict JSON on
+stdout**, making it easy to pipe into further processing.
+
+```
+uv run scripts/cli.py <subcommand> [flags]
+```
+
+The Sudoc catalogue covers **bibliographic records and their holdings** across
+French higher education and research libraries: books, serials, theses,
+manuscripts, maps, scores, audiovisual documents, and electronic resources.
+Data is in UNIMARC format (UTF-8). The service is public and needs no key.
+
+---
 
 ## When to use / When not to use
 
@@ -57,27 +91,6 @@ tags:
 - The task requires broad international scholarly literature.
 - The task targets French open-access preprints or institutional deposits.
 - DOI-based scholarly retrieval is the primary goal.
-
----
-
-## Overview
-
-`scripts/cli.py` is a self-contained CLI (runs with `uv run`) that wraps the
-[Sudoc SRU service](https://www.sudoc.abes.fr/cbs/sru/) maintained by
-[ABES](https://abes.fr). It exposes five subcommands and emits **strict JSON
-on stdout**, making it easy to pipe into further processing.
-
-```
-uv run scripts/cli.py <subcommand> [flags]
-```
-
-> **Path note**: adjust the path to `cli.py` to wherever it lives in your
-> project (e.g. `skills/search-records-sudoc/scripts/cli.py`).
-
-The Sudoc catalogue covers **bibliographic records and their holdings** across
-French higher education and research libraries. It contains books, serials,
-theses, manuscripts, maps, scores, audiovisual documents, and electronic
-resources. Data is in UNIMARC format (UTF-8).
 
 ---
 
@@ -159,7 +172,6 @@ uv run ./skills/search-records-sudoc/scripts/cli.py search \
 | `--year-from` | int | — | Inclusive lower bound on publication year |
 | `--year-to` | int | — | Inclusive upper bound on publication year |
 | `--year-exact` | int | — | Exact publication year (overrides year-from/year-to) |
-| `--trace` | flag | off | Append HTTP trace log to JSON output |
 
 > **Language note:** Use `--lang-major` for the 10 major languages (French,
 > English, German, etc.) and `--language` for all others. Do not mix them —
@@ -181,7 +193,6 @@ uv run ./skills/search-records-sudoc/scripts/cli.py lookup-by-ppn --ppn 07068504
 | Flag | Type | Notes |
 |---|---|---|
 | `--ppn` | string | **required** — Sudoc PPN |
-| `--trace` | flag | Append HTTP trace log |
 
 ---
 
@@ -198,7 +209,6 @@ uv run ./skills/search-records-sudoc/scripts/cli.py lookup-by-isbn --isbn 207036
 | Flag | Type | Notes |
 |---|---|---|
 | `--isbn` | string | **required** — ISBN-10 or ISBN-13, hyphens optional |
-| `--trace` | flag | Append HTTP trace log |
 
 ---
 
@@ -215,7 +225,6 @@ uv run ./skills/search-records-sudoc/scripts/cli.py count --query "pcp=pcmed and
 | Flag | Type | Notes |
 |---|---|---|
 | `--query` | string | **required** — same syntax as `search` |
-| `--trace` | flag | Append HTTP trace log |
 
 ---
 
@@ -241,7 +250,6 @@ uv run ./skills/search-records-sudoc/scripts/cli.py scan --index vma --term abri
 | `--term`  | string | **required** | Starting term to scan from |
 | `--max-terms` | int | `25` | Number of index terms to return |
 | `--response-position` | int | `1` | Position of `--term` in the returned list |
-| `--trace` | flag | — | Append HTTP trace log |
 
 ---
 
@@ -341,7 +349,7 @@ Use these keys in `--query` with the `key=value` syntax.
 
 ---
 
-## Output Schema
+## Output
 
 All subcommands return a JSON object. The `results` array uses this schema:
 
@@ -349,10 +357,13 @@ All subcommands return a JSON object. The `results` array uses this schema:
 {
   "total_found": 42,       // total matching records in Sudoc
   "returned": 15,          // records in this response
+  "error": null,           // string when the call degraded; exit code stays 0
   "query_used": "mti=jardins japonais and lan=fre",
   "results": [
     {
       "source": "sudoc",
+      "id": "070685045",                           // identity anchor = ppn
+      "url": "https://www.sudoc.fr/070685045",     // identity anchor = sudoc_url
       "ppn": "070685045",                          // Sudoc record number
       "title": "Les jardins japonais",             // main title (+ subtitle joined with " : ")
       "authors": ["Tanaka, Hiroshi"],              // personal authors (Lastname, Firstname)
@@ -426,21 +437,33 @@ The CLI **always exits with code 0** — always check for the `error` key.
 
 ---
 
-## Environment Variables
+## Composition hints
 
-Set in a `.env` file next to the script or export in the shell.
+```
+generate-search-queries          ← build the query set first
+  → search-records-sudoc         ← this skill (French academic holdings)
+  → search-records-hal           ← run in parallel for open-access deposits
+  → search-works-openalex        ← run in parallel for international literature
+      ↓
+    resolve-persons-idref        ← disambiguate an author behind a record
+    search-authorities-idref     ← look the resulting authority up, or its bibliography
+    convert-records-unimarc      ← reshape the UNIMARC payload
+      ↓
+    synthesize-literature        ← screen, appraise, synthesize
+```
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `SUDOC_HTTP_TIMEOUT` | `30.0` | Seconds before a request times out |
-| `SUDOC_MAX_RETRIES` | `3` | Total attempts per request (min 1) |
-| `SUDOC_BACKOFF_BASE` | `1.0` | Base seconds for exponential backoff |
-| `SUDOC_BACKOFF_FACTOR` | `2.0` | Backoff multiplier per retry |
-| `SUDOC_JITTER_MAX` | `0.25` | Max random jitter added per retry |
-| `SUDOC_TRACE` | `0` | Set to `1` to enable trace globally |
+Use `count` before `search` when the corpus size is unknown, and `scan` when a
+query returns zero results — it shows the terms the index actually holds.
 
-Retried HTTP status codes: **429, 500, 502, 503, 504**. Timeouts are also
-retried up to `SUDOC_MAX_RETRIES`.
+---
+
+## Environment variables
+
+None. The Sudoc SRU service is public and anonymous, so this skill ships no
+`.env` and no `.env.example`. The timeout, the retry count and the backoff are
+constants in `cli.py`.
+
+Retried status codes: **429, 500, 502, 503, 504**; timeouts are retried too.
 
 ---
 
@@ -545,6 +568,23 @@ always be at least one regular index term.
 - **Format:** UNIMARC encapsulated in XML, UTF-8.
 - **Protocol:** SRU version 1.1.
 - **No authentication required.**
+
+---
+
+## Failure modes
+
+- **Exit code always 0**: the CLI never raises non-zero on an upstream error —
+  always inspect the `error` field of the JSON output.
+- **PPN not found**: `lookup-by-ppn` returns zero results with
+  `"error": "PPN not found in Sudoc: '…'"`.
+- **Zero results on a plausible query**: usually an index-term mismatch, not an
+  absence. Run `scan --index <key> --term <prefix>` to see the terms the index
+  actually holds, and drop accents for maximum recall.
+- **Limitations rejected alone**: TDO, LAN, LAI, PAY, PAI and APU must be
+  combined with at least one regular index. The CLI always appends them to
+  `--query`, so never pass a query made only of filters.
+- **Rate limiting**: no published limit; transient 429/5xx are retried with
+  exponential backoff, and paginated pages are spaced by 200 ms.
 
 ---
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ['fastmcp>=2.0', 'requests']
+# dependencies = ['fastmcp>=3.4,<4', 'httpx']
 # ///
 
 """
@@ -15,20 +15,26 @@ Aucune clé API requise.
 Trois façons de lancer le serveur :
 
   # 1. Zero-install — exécution directe depuis GitHub (uv télécharge tout)
-  uv run https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/main/mcp/sudoc-sru/server_mcp.py \
+  uv run https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/main/mcp/sudoc-sru/mcp_server.py \
       --transport stdio
 
   # 2. Local stdio — le client lance le processus (recommandé pour desktop/IDE)
-  uv run /chemin/vers/mcp/sudoc-sru/server_mcp.py --transport stdio
+  uv run /chemin/vers/mcp/sudoc-sru/mcp_server.py --transport stdio
 
   # 3. Local HTTP — un seul serveur, plusieurs clients connectés par URL
-  uv run /chemin/vers/mcp/sudoc-sru/server_mcp.py \
-      --host 0.0.0.0 --port 8012 --transport streamable-http
+  uv run /chemin/vers/mcp/sudoc-sru/mcp_server.py \
+      --host 0.0.0.0 --port 8012 --transport http
+
+  # 4. HTTP sans état — pas d'affinité de session, pour un déploiement répliqué
+  uv run /chemin/vers/mcp/sudoc-sru/mcp_server.py --transport http --stateless
 
 Options:
     --host          TEXT    Bind host                    [default: 0.0.0.0]
     --port          INT     Bind port                    [default: 8012]
-    --transport     TEXT    stdio | sse | streamable-http [default: streamable-http]
+    --transport     TEXT    stdio | http | sse           [default: http]
+                            ("streamable-http" est accepté comme alias de "http")
+    --stateless             HTTP sans état : un transport neuf par requête, donc
+                            aucune session attachée à une réplique. Exclu avec sse.
     --http-timeout  FLOAT   Timeout par requête (s)      [default: 30.0]
     --max-retries   INT     Tentatives par requête       [default: 3]
     --backoff-base  FLOAT   Base du backoff exponentiel  [default: 1.0]
@@ -55,7 +61,7 @@ import time
 import xml.etree.ElementTree as ET
 from typing import Any
 
-import requests
+import httpx
 from fastmcp import FastMCP
 
 
@@ -70,17 +76,26 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--host",           default=os.environ.get("MCP_HOST", "0.0.0.0"))
     p.add_argument("--port",           type=int,   default=int(os.environ.get("MCP_PORT", "8012")))
-    p.add_argument("--transport",      default=os.environ.get("MCP_TRANSPORT", "streamable-http"),
-                   choices=["stdio", "sse", "streamable-http"])
-    p.add_argument("--http-timeout",   type=float, default=float(os.environ.get("HTTP_TIMEOUT",  "30.0")))
-    p.add_argument("--max-retries",    type=int,   default=int(os.environ.get("MAX_RETRIES",   "3")))
-    p.add_argument("--backoff-base",   type=float, default=float(os.environ.get("BACKOFF_BASE",  "1.0")))
-    p.add_argument("--backoff-factor", type=float, default=float(os.environ.get("BACKOFF_FACTOR","2.0")))
-    p.add_argument("--jitter-max",     type=float, default=float(os.environ.get("JITTER_MAX",   "0.25")))
-    p.add_argument("--trace",          action="store_true",
-                   default=os.environ.get("MCP_TRACE", "").lower() in ("1", "true", "yes"),
+    p.add_argument("--transport",      default=os.environ.get("MCP_TRANSPORT", "http"),
+                   choices=["stdio", "http", "sse", "streamable-http"],
+                   help='Transport ("streamable-http" est un alias de "http")')
+    p.add_argument("--stateless",      action="store_true",
+                   default=os.environ.get("MCP_STATELESS", "").lower() in ("1", "true", "yes"),
+                   help="HTTP sans état : un transport par requête, sans affinité de session")
+    # Tuning is a property of the connector, not of the installation: flags only,
+    # never environment variables.
+    p.add_argument("--http-timeout",   type=float, default=30.0)
+    p.add_argument("--max-retries",    type=int,   default=3)
+    p.add_argument("--backoff-base",   type=float, default=1.0)
+    p.add_argument("--backoff-factor", type=float, default=2.0)
+    p.add_argument("--jitter-max",     type=float, default=0.25)
+    p.add_argument("--trace",          action="store_true", default=False,
                    help="Include HTTP trace events in every tool response")
-    return p.parse_args()
+    ns = p.parse_args()
+    # FastMCP lève une erreur sur cette combinaison ; on échoue ici, avec l'usage.
+    if ns.stateless and ns.transport == "sse":
+        p.error("--stateless n'est pas supporté par le transport sse ; utilisez --transport http")
+    return ns
 
 
 args = _parse_args()
@@ -163,8 +178,13 @@ def _build_url(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION : HTTP layer — retry / backoff (synchrone, requests)
+# SECTION : HTTP layer — retry / backoff (synchrone, httpx)
 # ══════════════════════════════════════════════════════════════════════════════
+
+# Un seul client poolé pour le processus : httpx.get() reconstruirait le pool —
+# et rejouerait la poignée de main TLS — à chaque appel.
+HTTP = httpx.Client(timeout=HTTP_TIMEOUT, follow_redirects=True)
+
 
 def _backoff_sleep(attempt: int) -> float:
     """Délai exponentiel avec gigue aléatoire."""
@@ -203,7 +223,7 @@ def _get_xml(
                 "timeout_s": HTTP_TIMEOUT,
             })
         try:
-            resp = requests.get(url, timeout=HTTP_TIMEOUT)
+            resp = HTTP.get(url)
             last_status = resp.status_code
 
             if trace:
@@ -237,7 +257,7 @@ def _get_xml(
 
             resp.raise_for_status()
 
-        except requests.exceptions.Timeout as e:
+        except httpx.TimeoutException as e:
             last_error = f"timeout: {e}"
             if trace:
                 trace_events.append({
@@ -255,7 +275,7 @@ def _get_xml(
                 continue
             raise
 
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             last_error = str(e)
             if trace:
                 trace_events.append({
@@ -446,8 +466,14 @@ def _format_record(record: ET.Element) -> dict:
             if parts:
                 subjects.append(" -- ".join(parts))
 
+    sudoc_url = f"https://www.sudoc.fr/{ppn}" if ppn else None
+
     return {
+        # Ancres d'identité communes à tous les connecteurs du dépôt.
+        # `ppn` / `sudoc_url` restent exposés sous leur nom Sudoc d'origine.
         "source":           "sudoc",
+        "id":               ppn,
+        "url":              sudoc_url,
         "ppn":              ppn,
         "title":            title,
         # `authors` expose en priorité les auteurs personnes physiques ;
@@ -468,7 +494,7 @@ def _format_record(record: ET.Element) -> dict:
         "notes":            (_subfields(record, "300", "a") +
                              _subfields(record, "320", "a")) or None,
         "urls":             _subfields(record, "856", "u") or None,
-        "sudoc_url":        f"https://www.sudoc.fr/{ppn}" if ppn else None,
+        "sudoc_url":        sudoc_url,
     }
 
 
@@ -530,7 +556,7 @@ def _apply_limitations(query: str, limitations: list[str]) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 
 mcp = FastMCP(
-    name="sudoc",
+    name="sudoc-sru",
     instructions=(
         "Connecteur Sudoc SRU — interroge le catalogue collectif des bibliothèques "
         "de l'enseignement supérieur et de la recherche français (ABES). "
@@ -541,9 +567,45 @@ mcp = FastMCP(
 )
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION : enveloppe de réponse
+# ══════════════════════════════════════════════════════════════════════════════
+
+SERVER_NAME = "sudoc-sru"
+
+
+def _envelope(
+    command: str,
+    results: list[dict] | None = None,
+    *,
+    total_found: int | None = 0,
+    error: str | None = None,
+    **extra: Any,
+) -> dict:
+    """
+    Construit l'enveloppe que renvoie chaque outil de ce serveur.
+
+    `results` est toujours un tableau et `error` toujours présent (null en cas de
+    succès) : un agent lit une défaillance amont dans la charge utile au lieu
+    d'avoir à rattraper une erreur de protocole. `total_found` vaut null quand la
+    source ne sait pas compter.
+    """
+    items = list(results or [])
+    out: dict = {
+        "source": SERVER_NAME,
+        "command": command,
+        "total_found": total_found,
+        "returned": len(items),
+        "results": items,
+        "error": error,
+    }
+    out.update(extra)
+    return out
+
+
 # ── Tool 1 : search ───────────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool
 def search_sudoc(
     query: str,
     max_results: int = 15,
@@ -686,12 +748,17 @@ def search_sudoc(
 
     Returns:
         {
+          "source": "sudoc-sru",    # connecteur qui a répondu
+          "command": "search_sudoc",
           "total_found": int,       # total dans le Sudoc (peut dépasser returned)
           "returned": int,          # notices dans cette réponse
+          "error": str | null,      # null en cas de succès
           "query_used": str,        # requête complète avec limitations
           "results": [
             {
               "source": "sudoc",
+              "id": str,            # = ppn, ancre d'identité commune
+              "url": str,           # = sudoc_url, https://www.sudoc.fr/<ppn>
               "ppn": str,           # identifiant Sudoc (lien : sudoc.fr/<ppn>)
               "title": str | null,
               "authors": list[str], # "Nom, Prénom" — personnes en priorité,
@@ -759,14 +826,15 @@ def search_sudoc(
     encoded    = _encode_query(full_query)
 
     # ── Compte total ──────────────────────────────────────────────────────────
-    total, t = _get_total(encoded, trace=trace)
+    try:
+        total, t = _get_total(encoded, trace=trace)
+    except (RuntimeError, httpx.HTTPError, ET.ParseError) as e:
+        return _envelope("search_sudoc", error=str(e), query_used=full_query)
     trace_events.extend(t)
 
     if total == 0:
-        out: dict = {
-            "total_found": 0, "returned": 0,
-            "query_used": full_query, "results": [],
-        }
+        out = _envelope("search_sudoc", query_used=full_query,
+                        error=f"Aucune notice Sudoc pour : '{full_query}'")
         if trace:
             out["trace"] = trace_events
         return out
@@ -778,19 +846,23 @@ def search_sudoc(
 
     for start in range(1, to_fetch + 1, batch_size):
         this_batch = min(batch_size, to_fetch - len(records))
-        page, t = _fetch_page(encoded, start=start, batch=this_batch, trace=trace)
+        try:
+            page, t = _fetch_page(encoded, start=start, batch=this_batch, trace=trace)
+        except (RuntimeError, httpx.HTTPError, ET.ParseError) as e:
+            # Pagination partielle : on rend ce qui a été collecté, et la cause.
+            out = _envelope("search_sudoc", records, total_found=total,
+                            query_used=full_query, error=str(e))
+            if trace:
+                out["trace"] = trace_events
+            return out
         trace_events.extend(t)
         records.extend(page)
         if len(records) >= to_fetch:
             break
         time.sleep(0.2)  # délai de courtoisie entre pages
 
-    out = {
-        "total_found": total,
-        "returned":    len(records),
-        "query_used":  full_query,
-        "results":     records,
-    }
+    out = _envelope("search_sudoc", records, total_found=total,
+                    query_used=full_query)
     if trace:
         out["trace"] = trace_events
     return out
@@ -798,7 +870,7 @@ def search_sudoc(
 
 # ── Tool 2 : lookup_by_ppn ────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool
 def lookup_by_ppn(ppn: str) -> dict:
     """
     Récupère une notice Sudoc par son PPN (Pica Production Number).
@@ -815,12 +887,13 @@ def lookup_by_ppn(ppn: str) -> dict:
 
     Returns:
         {
-          "total_found": 1,
-          "returned": 1,
+          "source": "sudoc-sru", "command": "lookup_by_ppn",
+          "total_found": 1, "returned": 1, "error": null,
           "results": [ <notice normalisée — même schéma que search_sudoc> ]
         }
         Ou si le PPN n'existe pas :
         {
+          "source": "sudoc-sru", "command": "lookup_by_ppn",
           "total_found": 0, "returned": 0, "results": [],
           "error": "PPN not found in Sudoc: '...'"
         }
@@ -828,7 +901,10 @@ def lookup_by_ppn(ppn: str) -> dict:
     trace = TRACE_DEFAULT
     encoded = _encode_query(f"ppn={ppn}")
     url = _build_url(encoded, start_record=1, maximum_records=1)
-    root, tevents = _get_xml(url, trace=trace)
+    try:
+        root, tevents = _get_xml(url, trace=trace)
+    except (RuntimeError, httpx.HTTPError, ET.ParseError) as e:
+        return _envelope("lookup_by_ppn", error=str(e))
 
     result: dict | None = None
     for srw_rec in root.findall(".//srw:record", namespaces=SRU_NS):
@@ -839,14 +915,11 @@ def lookup_by_ppn(ppn: str) -> dict:
                 result = _format_record(unimarc)
                 break
 
-    out: dict
     if result:
-        out = {"total_found": 1, "returned": 1, "results": [result]}
+        out = _envelope("lookup_by_ppn", [result], total_found=1)
     else:
-        out = {
-            "total_found": 0, "returned": 0, "results": [],
-            "error": f"PPN not found in Sudoc: '{ppn}'",
-        }
+        out = _envelope("lookup_by_ppn",
+                        error=f"PPN not found in Sudoc: '{ppn}'")
     if trace:
         out["trace"] = tevents
     return out
@@ -854,7 +927,7 @@ def lookup_by_ppn(ppn: str) -> dict:
 
 # ── Tool 3 : lookup_by_isbn ───────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool
 def lookup_by_isbn(isbn: str) -> dict:
     """
     Récupère les notices Sudoc correspondant à un ISBN (10 ou 13 chiffres).
@@ -872,8 +945,10 @@ def lookup_by_isbn(isbn: str) -> dict:
 
     Returns:
         {
+          "source": "sudoc-sru", "command": "lookup_by_isbn",
           "total_found": int,
           "returned": int,
+          "error": str | null,
           "isbn_queried": str,      # ISBN tel que passé en paramètre
           "results": [ <notices normalisées — même schéma que search_sudoc> ]
         }
@@ -882,7 +957,10 @@ def lookup_by_isbn(isbn: str) -> dict:
     clean = isbn.replace("-", "")
     encoded = _encode_query(f"isb={clean}")
     url = _build_url(encoded, start_record=1, maximum_records=10)
-    root, tevents = _get_xml(url, trace=trace)
+    try:
+        root, tevents = _get_xml(url, trace=trace)
+    except (RuntimeError, httpx.HTTPError, ET.ParseError) as e:
+        return _envelope("lookup_by_isbn", error=str(e), isbn_queried=isbn)
 
     count_el = root.find(".//srw:numberOfRecords", namespaces=SRU_NS)
     total    = int(count_el.text) if count_el is not None and count_el.text else 0
@@ -895,12 +973,12 @@ def lookup_by_isbn(isbn: str) -> dict:
             if unimarc is not None:
                 records.append(_format_record(unimarc))
 
-    out: dict = {
-        "total_found":  total,
-        "returned":     len(records),
-        "isbn_queried": isbn,
-        "results":      records,
-    }
+    out = _envelope(
+        "lookup_by_isbn", records,
+        total_found=total,
+        isbn_queried=isbn,
+        error=None if records else f"Aucune notice Sudoc pour l'ISBN '{isbn}'",
+    )
     if trace:
         out["trace"] = tevents
     return out
@@ -908,7 +986,7 @@ def lookup_by_isbn(isbn: str) -> dict:
 
 # ── Tool 4 : count_records ────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool
 def count_records(query: str) -> dict:
     """
     Retourne le nombre total de notices correspondant à une requête SRU,
@@ -935,20 +1013,27 @@ def count_records(query: str) -> dict:
 
     Returns:
         {
-          "query":       str,   # requête passée en entrée
+          "source": "sudoc-sru", "command": "count_records",
           "total_found": int,   # nombre total de notices correspondantes
+          "returned":    0,     # cet outil ne rapatrie aucune notice
+          "results":     [],    # toujours un tableau, ici toujours vide
+          "error":       str | null,
+          "query":       str,   # requête passée en entrée
           "url_used":    str    # URL SRU effectivement exécutée (debug)
         }
     """
     trace = TRACE_DEFAULT
     encoded  = _encode_query(query)
     url      = _build_url(encoded, start_record=1, maximum_records=1)
-    root, tevents = _get_xml(url, trace=trace)
+    try:
+        root, tevents = _get_xml(url, trace=trace)
+    except (RuntimeError, httpx.HTTPError, ET.ParseError) as e:
+        return _envelope("count_records", error=str(e), query=query, url_used=url)
 
     el    = root.find(".//srw:numberOfRecords", namespaces=SRU_NS)
     total = int(el.text) if el is not None and el.text else 0
 
-    out: dict = {"query": query, "total_found": total, "url_used": url}
+    out = _envelope("count_records", total_found=total, query=query, url_used=url)
     if trace:
         out["trace"] = tevents
     return out
@@ -956,7 +1041,7 @@ def count_records(query: str) -> dict:
 
 # ── Tool 5 : scan_index ───────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool
 def scan_index(
     index_key: str,
     term: str,
@@ -1003,9 +1088,13 @@ def scan_index(
 
     Returns:
         {
-          "index":      str,          # clé d'index interrogée
-          "start_term": str,          # terme de départ
-          "terms": [
+          "source": "sudoc-sru", "command": "scan_index",
+          "total_found": int,         # nombre de termes retournés
+          "returned":    int,
+          "error":       str | null,
+          "index":       str,         # clé d'index interrogée
+          "start_term":  str,         # terme de départ
+          "results": [                # un élément par terme de l'index
             {
               "term":  str | null,    # forme normalisée dans le catalogue
               "count": int | null     # nombre de notices pour ce terme
@@ -1022,7 +1111,11 @@ def scan_index(
         f"&responsePosition={response_position}"
         f"&maximumTerms={maximum_terms}"
     )
-    root, tevents = _get_xml(url, trace=trace)
+    try:
+        root, tevents = _get_xml(url, trace=trace)
+    except (RuntimeError, httpx.HTTPError, ET.ParseError) as e:
+        return _envelope("scan_index", error=str(e),
+                         index=index_key, start_term=term)
 
     terms: list[dict] = []
     for term_el in root.findall(".//{http://www.loc.gov/zing/srw/}term"):
@@ -1033,7 +1126,8 @@ def scan_index(
             "count": int(count_el.text) if count_el is not None and count_el.text else None,
         })
 
-    out: dict = {"index": index_key, "start_term": term, "terms": terms}
+    out = _envelope("scan_index", terms, total_found=len(terms),
+                    index=index_key, start_term=term)
     if trace:
         out["trace"] = tevents
     return out
@@ -1049,8 +1143,14 @@ if __name__ == "__main__":
         # host/port sans effet dans ce mode.
         mcp.run(transport="stdio")
     else:
+        # stateless_http=True reconstruit un transport à chaque requête : aucune
+        # session n'est attachée à une réplique, ce qu'exige un déploiement
+        # derrière un load balancer ou avec plusieurs workers uvicorn. Désactivé
+        # par défaut — un processus unique est moins coûteux avec état, et les
+        # clients stdio ne passent jamais par cette branche.
         mcp.run(
             transport=args.transport,
             host=args.host,
             port=args.port,
+            stateless_http=args.stateless,
         )

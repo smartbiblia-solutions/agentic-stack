@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ['jsonschema', 'python-dotenv']
+# dependencies = ['jsonschema']
 # ///
 
 

@@ -1,5 +1,5 @@
 ---
-name: generate_search_queries
+name: generate-search-queries
 description: >
   Build a structured documentary search strategy from a natural-language research
   question. Decomposes concepts, expands terminology (synonyms, broader/narrower
@@ -10,15 +10,35 @@ description: >
   "systematic review on", "what should I search for", "generate queries about",
   or any request that implies going from a research question to searchable
   expressions.
+version: "0.2.0"
+author: smartbiblia
+maturity: stable
+preferred_output: json
 metadata:
   {
-    "version": "0.1.0",
-    "author": "smartbiblia",
-    "maturity": "stable",
-    "preferred_output": "json",
-	"nanobot":  { "always": true, "requires": { } },
-    "openclaw": { "always": true, "requires": { } }
+    "openclaw": {
+      "always": true,
+      "requires": { "bins": ["uv"], "env": [], "config": [] }
+    }
   }
+
+selection:
+  use_when:
+    - The task starts from a research question and needs searchable expressions.
+    - A bilingual (EN/FR) or multi-database search strategy is required.
+    - The user needs concept decomposition and terminology expansion.
+    - A systematic review protocol must document its search strategy.
+  avoid_when:
+    - Queries already exist and the next step is retrieval.
+    - The user supplies keywords directly and only wants a search run.
+    - Records have been retrieved and the next step is screening or synthesis.
+  prefer_over:
+    - ad-hoc-query-writing
+  combine_with:
+    - search-works-openalex
+    - search-records-hal
+    - search-records-sudoc
+    - synthesize-literature
 
 tags:
   - systematic-review
@@ -28,6 +48,20 @@ tags:
 ---
 
 # generate-search-queries
+
+## Purpose
+
+A contract pack for a single task: designing a documentary search strategy
+from a natural-language research question.
+
+The skill decomposes the question into core concepts, expands each concept
+(synonyms, broader terms, narrower terms, related terms), and produces
+8–15 bilingual (EN/FR) search queries directly usable in academic databases
+(OpenAlex, HAL, PubMed, Web of Science, Scopus).
+
+Output is strict JSON validated against a schema.
+
+---
 
 ## When to use / When not to use
 
@@ -41,20 +75,6 @@ tags:
 
 - Search queries have already been produced and the next step is retrieval.
 - The user provides keywords directly and only needs to run a search.
-
----
-
-## Purpose
-
-A contract pack for a single task: designing a documentary search strategy
-from a natural-language research question.
-
-The skill decomposes the question into core concepts, expands each concept
-(synonyms, broader terms, narrower terms, related terms), and produces
-8–15 bilingual (EN/FR) search queries directly usable in academic databases
-(OpenAlex, HAL, PubMed, Web of Science, Scopus).
-
-Output is strict JSON validated against a schema.
 
 ---
 
@@ -121,6 +141,25 @@ The validated JSON has this structure:
 
 The `queries[].query` strings are directly usable as search terms in any
 academic database retrieval step.
+
+---
+
+## Composition hints
+
+```
+generate-search-queries          ← this skill: always first
+      ↓
+  → search-works-openalex        ← run the `en` queries here
+  → search-records-hal           ← run the `fr` queries here
+  → search-records-sudoc         ← run the `fr` queries against library holdings
+      ↓
+    synthesize-literature        ← screen, appraise, synthesize
+```
+
+Feed `queries[].query` straight into the retrieval skills' `--query` / `--q`
+flags, routing on `queries[].lang`. `suggested_filters` maps onto the retrieval
+flags: `open_access_recommended` → `--oa`, `date_range_recommendation` →
+`--date-from` / `--year-from`.
 
 ---
 

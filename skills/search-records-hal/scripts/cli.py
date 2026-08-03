@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ['urllib3']
+# dependencies = ['httpx']
 # ///
 """HAL Search API CLI (collection-first).
 
@@ -13,8 +13,12 @@ This CLI is designed for agent/LLM usage:
 - retries/backoff for transient HTTP errors
 - collection-first scoping (recommended)
 
+The service is public and anonymous: no environment variable, no key. Timeout,
+retry count and backoff are constants below — properties of the connector, not
+of the installation.
+
 Run:
-  uv run skills/search-hal/scripts/cli.py search --collection XXX --q 'text:test'
+  uv run skills/search-records-hal/scripts/cli.py search --collection XXX --q 'text:test'
 
 """
 
@@ -22,12 +26,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import random
 import sys
 import time
 import urllib.parse
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -92,94 +94,58 @@ def normalize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
         "raw": doc,
     }
 
-import urllib.request
-import urllib.error
+import httpx
 
 
 BASE_URL = "https://api.archives-ouvertes.fr/search/"
 
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.environ.get(name, default))
-    except Exception:
-        return default
-
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.environ.get(name, default))
-    except Exception:
-        return default
-
-
-@dataclass
-class RetryCfg:
-    timeout: float = _env_float("HAL_HTTP_TIMEOUT", 20.0)
-    max_retries: int = _env_int("HAL_MAX_RETRIES", 2)
-    backoff_base: float = _env_float("HAL_BACKOFF_BASE", 1.0)
-    backoff_factor: float = _env_float("HAL_BACKOFF_FACTOR", 2.0)
-    jitter_max: float = _env_float("HAL_JITTER_MAX", 0.25)
-
-
+HTTP_TIMEOUT = 20.0
+MAX_RETRIES = 3
+BACKOFF_BASE = 1.0
+BACKOFF_FACTOR = 2.0
+JITTER_MAX = 0.25
 RETRIED_STATUS = {429, 500, 502, 503, 504}
 
+# One pooled client for the process: httpx.get() would rebuild the client — and
+# replay the TLS handshake — on every call.
+HTTP = httpx.Client(
+    timeout=HTTP_TIMEOUT,
+    follow_redirects=True,
+    headers={"User-Agent": "smartbiblia-hal-skill/0.2"},
+)
 
-def _sleep_backoff(attempt: int, cfg: RetryCfg) -> None:
-    base = cfg.backoff_base * (cfg.backoff_factor ** max(0, attempt - 1))
-    jitter = random.random() * cfg.jitter_max
-    time.sleep(base + jitter)
+
+def _sleep_backoff(attempt: int) -> None:
+    delay = BACKOFF_BASE * (BACKOFF_FACTOR ** (attempt - 1))
+    time.sleep(delay + random.random() * JITTER_MAX)
 
 
-def http_get_json(url: str, cfg: RetryCfg) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any], Optional[str]]:
-    """Return (json_obj, trace, error)."""
-    trace: Dict[str, Any] = {"url": url, "attempts": []}
-
-    for attempt in range(1, cfg.max_retries + 2):
-        t0 = time.time()
+def http_get_json(url: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Return (json_obj, error). Never raises — the error is data."""
+    for attempt in range(1, MAX_RETRIES + 1):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "smartbiblia-hal-skill/0.1"})
-            with urllib.request.urlopen(req, timeout=cfg.timeout) as resp:
-                status = resp.getcode()
-                body = resp.read()
-                dt = time.time() - t0
-                trace["attempts"].append({"attempt": attempt, "status": status, "seconds": dt})
+            resp = HTTP.get(url)
 
-                if status in RETRIED_STATUS and attempt <= cfg.max_retries + 1:
-                    _sleep_backoff(attempt, cfg)
-                    continue
+            if resp.status_code in RETRIED_STATUS and attempt < MAX_RETRIES:
+                _sleep_backoff(attempt)
+                continue
 
+            if resp.status_code >= 400:
+                return None, f"HTTP {resp.status_code} on {url}"
+
+            try:
+                return resp.json(), None
+            except Exception:
                 ctype = resp.headers.get("content-type", "")
-                if "json" not in ctype:
-                    # still try decoding as json; if it fails, return raw snippet
-                    try:
-                        obj = json.loads(body.decode("utf-8", errors="replace"))
-                        return obj, trace, None
-                    except Exception:
-                        snippet = body[:300].decode("utf-8", errors="replace")
-                        return None, trace, f"Non-JSON response (content-type={ctype}). Snippet: {snippet}"
+                snippet = resp.text[:300]
+                return None, f"Non-JSON response (content-type={ctype}). Snippet: {snippet}"
 
-                obj = json.loads(body.decode("utf-8"))
-                return obj, trace, None
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            if attempt == MAX_RETRIES:
+                return None, f"Request failed: {exc}"
+            _sleep_backoff(attempt)
 
-        except urllib.error.HTTPError as e:
-            dt = time.time() - t0
-            status = getattr(e, "code", None)
-            trace["attempts"].append({"attempt": attempt, "status": status, "seconds": dt, "error": str(e)})
-            if status in RETRIED_STATUS and attempt <= cfg.max_retries + 1:
-                _sleep_backoff(attempt, cfg)
-                continue
-            return None, trace, f"HTTPError {status}: {e}"
-
-        except Exception as e:
-            dt = time.time() - t0
-            trace["attempts"].append({"attempt": attempt, "status": None, "seconds": dt, "error": str(e)})
-            if attempt <= cfg.max_retries + 1:
-                _sleep_backoff(attempt, cfg)
-                continue
-            return None, trace, f"Request failed: {e}"
-
-    return None, trace, "Request failed (exhausted retries)"
+    return None, "Request failed (exhausted retries)"
 
 
 def build_scope_url(collection: Optional[str], portal: Optional[str]) -> Tuple[str, Dict[str, Any]]:
@@ -223,7 +189,6 @@ def parse_args() -> argparse.Namespace:
         choices=["json", "xml", "xml-tei", "bibtex", "endnote", "rss", "atom", "csv"],
     )
     ps.add_argument("--indent", action="store_true")
-    ps.add_argument("--trace", action="store_true")
 
     return p.parse_args()
 
@@ -293,11 +258,7 @@ def cmd_search(a: argparse.Namespace) -> Dict[str, Any]:
         out["source_url"] = url
         return out
 
-    cfg = RetryCfg()
-    obj, trace, err = http_get_json(url, cfg)
-    if a.trace or os.environ.get("HAL_TRACE", "0") == "1":
-        out["trace"] = trace
-
+    obj, err = http_get_json(url)
     if err:
         out["error"] = err
         out["source_url"] = url

@@ -8,7 +8,8 @@ services:
       OPENALEX_API_KEY: ${OPENALEX_API_KEY}
       MCP_HOST: 0.0.0.0
       MCP_PORT: "8011"
-      MCP_TRANSPORT: streamable-http
+      MCP_TRANSPORT: http
+      MCP_STATELESS: ${MCP_STATELESS:-false}
     ports:
       - "8011:8011"
     restart: unless-stopped
@@ -21,7 +22,8 @@ services:
     environment:
       MCP_HOST: 0.0.0.0
       MCP_PORT: "8012"
-      MCP_TRANSPORT: streamable-http
+      MCP_TRANSPORT: http
+      MCP_STATELESS: ${MCP_STATELESS:-false}
     ports:
       - "8012:8012"
     restart: unless-stopped
@@ -41,7 +43,39 @@ services:
       PRIMO_LANG: ${PRIMO_LANG:-en}
       MCP_HOST: 0.0.0.0
       MCP_PORT: "8013"
-      MCP_TRANSPORT: streamable-http
+      MCP_TRANSPORT: http
+      MCP_STATELESS: ${MCP_STATELESS:-false}
     ports:
       - "8013:8013"
+    restart: unless-stopped
+
+  mcp-idref-resolver-api:
+    build:
+      context: ./idref-resolver-api
+      dockerfile: Dockerfile
+    container_name: mcp-idref-resolver-api
+    environment:
+      IDREF_API_URL: ${IDREF_API_URL:-http://localhost:8000}
+      IDREF_API_KEY: ${IDREF_API_KEY}
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8015"
+      MCP_TRANSPORT: http
+      MCP_STATELESS: ${MCP_STATELESS:-false}
+    ports:
+      - "8015:8015"
+    restart: unless-stopped
+
+  mcp-recherche-data-gouv:
+    build:
+      context: ./recherche-data-gouv
+      dockerfile: Dockerfile
+    container_name: mcp-recherche-data-gouv
+    environment:
+      RECHERCHE_DATA_GOUV_API_URL: ${RECHERCHE_DATA_GOUV_API_URL:-https://entrepot.recherche.data.gouv.fr/api}
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8014"
+      MCP_TRANSPORT: http
+      MCP_STATELESS: ${MCP_STATELESS:-false}
+    ports:
+      - "8014:8014"
     restart: unless-stopped

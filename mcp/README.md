@@ -1,0 +1,157 @@
+# MCP servers
+
+Five [MCP](https://modelcontextprotocol.io) servers that give AI agents direct
+access to scholarly and bibliographic sources. Each one is a single
+self-contained `mcp_server.py` with inline
+[PEP 723](https://peps.python.org/pep-0723/) dependencies, runnable by
+[`uv`](https://docs.astral.sh/uv/) with no install step, shipped with a
+`Dockerfile` for VPS deployment and a standalone `demo/` Gradio app that deploys
+as a Hugging Face Space.
+
+| Server | Port | Key required | What it exposes |
+|---|---|---|---|
+| [`openalex`](./openalex/) | 8011 | recommended | ~250M scholarly works: keyword search, DOI resolution, citing works, topic classification |
+| [`sudoc-sru`](./sudoc-sru/) | 8012 | no | French union catalogue (SRU/UNIMARC): search, PPN and ISBN lookup, record counts, index scan |
+| [`primo`](./primo/) | 8013 | **yes** | An institutional Primo (Ex Libris) discovery layer: catalogue search and record retrieval |
+| [`recherche-data-gouv`](./recherche-data-gouv/) | 8014 | no | French national research data repository (Dataverse): dataset search, usage metrics, metadata blocks |
+| [`idref-resolver-api`](./idref-resolver-api/) | 8015 | **yes** | Person-to-IdRef-PPN alignment from free-text clues, with an explicit abstention when the evidence is too weak |
+
+Each server has its own README with client-by-client setup (Claude Code, Claude
+Desktop, Cursor/VS Code), a zero-install stdio recipe, the full flag reference
+and troubleshooting.
+
+---
+
+## Tools at a glance
+
+**`openalex`** — `search_works`, `lookup_by_doi`, `get_citing_works`,
+`classify_text`
+
+**`sudoc-sru`** — `search_sudoc`, `lookup_by_ppn`, `lookup_by_isbn`,
+`count_records`, `scan_index`
+
+**`primo`** — `search_catalog`, `get_record`
+
+**`recherche-data-gouv`** — `search`, `metrics`, `metadatablocks`
+
+**`idref-resolver-api`** — `align_person`
+
+---
+
+## Quick start
+
+### One server, no install
+
+```bash
+uv run mcp/openalex/mcp_server.py --transport stdio
+```
+
+Or straight from GitHub, without cloning:
+
+```bash
+claude mcp add openalex -- \
+  uv run https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/main/mcp/openalex/mcp_server.py \
+  --transport stdio
+```
+
+### All servers, via Docker
+
+```bash
+cp mcp/.env.example mcp/.env    # fill in OPENALEX_API_KEY, the PRIMO_* and IDREF_* values
+docker compose -f mcp/compose.yml up --build
+```
+
+Endpoints: `http://localhost:{8011,8012,8013,8014,8015}/mcp`.
+
+### In a browser
+
+Every server folder also holds a `demo/` — a **standalone** Gradio app that
+re-implements one to three of the server's tools against the same API and wraps
+them in a UI:
+
+```bash
+cd mcp/openalex/demo
+uv run --with 'gradio[mcp]>=6,<7' --with httpx app.py
+```
+
+`demo/app.py` imports nothing from the folder above it: the Space root is
+`demo/`, so `mcp_server.py` does not exist there. Its tools are a hand-kept copy
+— same names, same arguments, same response shape. Change one, change the other.
+
+Each `demo/` is a deployable Hugging Face Space as it stands (`git subtree push
+--prefix=mcp/<server>/demo space main`); see the folder's README. The demo MCP
+endpoint it serves at `/gradio_api/mcp/sse` is **secondary** — `mcp_server.py`
+remains canonical, with the full tool set and no tightened result limits.
+
+### Via the CLI
+
+The [`smartbiblia`](../cli/) CLI downloads a server from this catalogue and
+prints the client configuration block for it:
+
+```bash
+uvx smartbiblia list --kind mcp             # browse
+uvx smartbiblia info primo                  # port, entrypoint, required env vars
+uvx smartbiblia add openalex --kind mcp     # → ./mcp/openalex/
+uvx smartbiblia mcp-config openalex         # mcpServers block to paste into a client
+```
+
+`mcp-config` takes `--transport http` for an HTTP block, or `--remote` to run the
+server straight from GitHub with nothing installed. It never writes a key: the
+expected variables are pre-filled empty. Full reference in
+[`../cli/README.md`](../cli/README.md).
+
+---
+
+## Conventions
+
+The repository-wide rules — pooled `httpx` client, errors as data, the common
+record schema, secrets — are in the [root README](../README.md#conventions) and
+hold here too. What follows is specific to the MCP servers:
+
+- **One file**: `mcp_server.py`, plus a `Dockerfile`, a `README.md`, and a
+  `demo/` folder (`app.py`, `requirements.txt`, `README.md` with the Space
+  front-matter) deployable as a Hugging Face Space. `demo/app.py` is a separate
+  artefact: it re-implements a narrow subset of the tools and imports nothing
+  from its parent folder, which does not exist once `demo/` is the Space root.
+- **FastMCP is pinned to `>=3.4,<4`** in the PEP 723 header and in every
+  `Dockerfile`, so `uv run` resolves the same major everywhere. FastMCP 4 is
+  still a beta prerelease; `uv` skips prereleases by default, so moving to it
+  would mean `--prerelease=allow` on every zero-install command.
+- **Transport is a flag**: `--transport stdio | http | sse` (default `http`;
+  `streamable-http` is accepted as an alias of `http`), with `--host` and
+  `--port`. All three also read `MCP_TRANSPORT` / `MCP_HOST` / `MCP_PORT` so
+  containers can be configured without changing the entrypoint.
+- **`--stateless` for sessionless HTTP**: builds a new transport per request so
+  no session is pinned to a replica — what a load-balanced or multi-worker
+  deployment needs. Off by default (a single long-lived process is cheaper
+  stateful), also readable from `MCP_STATELESS`, and rejected with `sse`, which
+  cannot be stateless.
+- **Retry and backoff are flags, not env vars**: `--http-timeout`,
+  `--max-retries`, `--backoff-base`, `--backoff-factor`, `--jitter-max`. Only
+  endpoints and credentials come from the environment. (Skills apply the same
+  rule with constants instead of flags.)
+- **Tools return structured dicts**, with a `source`, a `command`, an `error`
+  field, and an optional `trace` array when `--trace` is on.
+
+---
+
+## Companion skills
+
+Several servers have a skill counterpart under [`../skills/`](../skills/) — the
+same source, exposed as a CLI for agents that prefer a shell tool over an MCP
+connection:
+
+| Server | Skill |
+|---|---|
+| `openalex` | [`search-works-openalex`](../skills/search-works-openalex/SKILL.md) |
+| `sudoc-sru` | [`search-records-sudoc`](../skills/search-records-sudoc/SKILL.md) |
+| `idref-resolver-api` | [`resolve-persons-idref`](../skills/resolve-persons-idref/SKILL.md) |
+
+---
+
+## See also
+
+- Repo overview and shared conventions: [`../README.md`](../README.md)
+- `smartbiblia` command reference: [`../cli/README.md`](../cli/README.md)
+- MCP protocol: <https://modelcontextprotocol.io>
+- FastMCP: <https://gofastmcp.com>

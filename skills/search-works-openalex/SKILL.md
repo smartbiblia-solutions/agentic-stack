@@ -1,5 +1,5 @@
 ---
-name: search_works_openalex
+name: search-works-openalex
 description: >
   Search and retrieve academic papers from OpenAlex, the world's largest open
   bibliographic database. Use this skill whenever the user wants to find
@@ -10,17 +10,17 @@ description: >
   any request involving bibliographic data. Use it even if the user doesn't
   explicitly name OpenAlex — if they want to find or analyse academic papers,
   this skill applies.
+version: "0.2.0"
+author: smartbiblia
+maturity: stable
+preferred_output: json
 metadata:
   {
-    "version": "0.1.0",
-    "author": "smartbiblia",
-    "maturity": "stable",
-    "preferred_output": "json",
-    "openclaw":
-      {
-        "requires": { "bins": ["uv"], "env": ["OPENALEX_API_KEY"] },
-        "primaryEnv": "OPENALEX_API_KEY",
-      },
+    "openclaw": {
+      "always": true,
+      "requires": { "bins": ["uv"], "env": [], "config": [] },
+      "primaryEnv": "OPENALEX_API_KEY"
+    }
   }
 
 selection:
@@ -34,6 +34,10 @@ selection:
     - Papers have already been retrieved and the next step is appraisal or synthesis.
   prefer_over:
     - generic-web-search
+  combine_with:
+    - generate-search-queries
+    - search-records-hal
+    - synthesize-literature
 
 tags:
   - openalex
@@ -43,17 +47,6 @@ tags:
 ---
 
 # search-works-openalex
-
-## When to use / When not to use
-
-Use this skill for any task involving discovery or retrieval of scholarly works,
-DOI resolution, citation graph exploration, or topic classification of academic text.
-
-Do not use it when:
-- The task concerns a library catalog or institutional holdings.
-- Papers have already been retrieved and the next step is appraisal or synthesis.
-
----
 
 ## Purpose
 
@@ -76,6 +69,19 @@ This skill exposes four logical operations, each addressable independently:
 | `lookup-dois-openalex` | `batch-lookup-by-doi` | Resolve one or more DOIs to full metadata |
 | `get-citing-works-openalex` | `get-citing-works` | Find papers citing a specific work |
 | `classify-text-openalex` | `classify-text` | Classify a title or abstract by academic topic |
+
+---
+
+## When to use / When not to use
+
+Use this skill for any task involving discovery or retrieval of scholarly works,
+DOI resolution, citation graph exploration, or topic classification of academic text.
+
+Do not use it when:
+- The task concerns a library catalog or institutional holdings — use
+  `search-records-sudoc` (French union catalogue) or `search-records-hal`.
+- Papers have already been retrieved and the next step is appraisal or
+  synthesis — use `synthesize-literature`.
 
 ---
 
@@ -107,7 +113,6 @@ uv run ./skills/search-works-openalex/scripts/cli.py search \
 | `--sort-by` | string | `publication_date:desc` | Any OpenAlex sort field, e.g. `cited_by_count:desc` |
 | `--author` | string | — | Author name **or** ORCID (e.g. `0000-0002-1825-0097`). Resolved automatically. |
 | `--institution` | string | — | Institution name **or** ROR URL. Resolved automatically. |
-| `--trace` | flag | off | Append HTTP trace log to output JSON |
 
 **Author/institution resolution**: when a name is given (not an ID), the CLI
 makes an extra API call to resolve it to an OpenAlex ID before searching. If
@@ -140,7 +145,6 @@ uv run ./skills/search-works-openalex/scripts/cli.py batch-lookup-by-doi \
 |---|---|---|
 | `--doi` | string (repeatable) | Short form (`10.xxx/…`) or full URL — both accepted |
 | `--doi-file` | path | Text file, one DOI per line |
-| `--trace` | flag | Append HTTP trace log |
 
 Both `--doi` and `--doi-file` can be combined. DOIs are auto-normalised to
 `https://doi.org/…` format internally; you don't need to include the prefix.
@@ -162,7 +166,6 @@ uv run ./skills/search-works-openalex/scripts/cli.py get-citing-works \
 |---|---|---|---|
 | `--openalex-id` | string | **required** | Short ID (`W2741809807`) or full URL — both accepted |
 | `--max-results` | int | `20` | Max 200 |
-| `--trace` | flag | — | Append HTTP trace log |
 
 To get the OpenAlex ID for a paper, run `batch-lookup-by-doi` first and read
 the `openalex_id` field from its result.
@@ -188,7 +191,6 @@ uv run ./skills/search-works-openalex/scripts/cli.py classify-text \
 |---|---|---|
 | `--text` | string | The text to classify (min 20 chars, truncated at 2000) |
 | `--file` | path | Text file to read from; used if `--text` is absent |
-| `--trace` | flag | Append HTTP trace log |
 
 Both `--text` and `--file` can be provided; `--text` takes precedence. If the
 input is shorter than 20 characters the response will contain
@@ -273,22 +275,36 @@ the `error` key in the output.
 
 ---
 
+## Composition hints
+
+```
+generate-search-queries          ← build the query set first
+  → search-works-openalex        ← this skill
+  → search-records-hal           ← run in parallel for French deposits
+  → search-records-sudoc         ← run in parallel for library holdings
+      ↓
+    get-citing-works             ← expand the citation graph
+      ↓
+    synthesize-literature        ← screen, appraise, synthesize
+```
+
+`classify-text` is a side branch: use it to place a research question in the
+OpenAlex topic hierarchy before searching, and feed the returned topic names
+back into `--query`.
+
+---
+
 ## Environment variables
 
-Set these in a `.env` file next to the script or export them in the shell.
+Copy `scripts/.env.example` to `scripts/.env`, or export in the shell.
 
-| Variable | Default | Purpose |
+| Variable | Required | Purpose |
 |---|---|---|
-| `OPENALEX_API_KEY` | *(empty)* | Optional API key for higher rate limits |
-| `OPENALEX_HTTP_TIMEOUT` | `15.0` | Seconds before a request times out |
-| `OPENALEX_MAX_RETRIES` | `2` | Total attempts per request (min 1) |
-| `OPENALEX_BACKOFF_BASE` | `1.0` | Base seconds for exponential backoff |
-| `OPENALEX_BACKOFF_FACTOR` | `2.0` | Backoff multiplier per retry |
-| `OPENALEX_JITTER_MAX` | `0.25` | Max random jitter added per retry (seconds) |
-| `OPENALEX_TRACE` | `0` | Set to `1` to enable trace logging globally |
+| `OPENALEX_API_KEY` | no | « Polite pool » — higher rate limits. Anonymous access works without it. |
 
-Retried status codes: **429, 403, 500, 502, 503, 504**. Timeouts are also
-retried up to `MAX_RETRIES`.
+Retried status codes: **429, 403, 500, 502, 503, 504**; timeouts are retried
+too. The timeout, the retry count and the backoff are constants in `cli.py`,
+not environment variables.
 
 ---
 

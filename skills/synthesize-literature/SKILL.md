@@ -1,5 +1,5 @@
 ---
-name: synthesize_literature
+name: synthesize-literature
 description: >
   Contract pack for the post-retrieval stages of an academic literature review:
   screening, summarization, metadata extraction, quality appraisal, and synthesis
@@ -9,15 +9,35 @@ description: >
   isolation or chain them in a full review pipeline. Always use this skill before
   any synthesis or appraisal step. Do not use it for retrieval — retrieval must
   be handled separately before using this skill.
+version: "1.3.0"
+author: smartbiblia
+maturity: stable
+preferred_output: json
 metadata:
   {
-    "version": "1.2.0",
-    "author": "smartbiblia",
-    "maturity": "stable",
-    "preferred_output": "json",
-	"nanobot":  { "always": true, "requires": { } },
-    "openclaw": { "always": true, "requires": { } }
+    "openclaw": {
+      "always": true,
+      "requires": { "bins": ["uv"], "env": [], "config": [] }
+    }
   }
+
+selection:
+  use_when:
+    - Papers have been retrieved and must be screened, summarized or appraised.
+    - A thematic, chronological, methodological or PRISMA synthesis is requested.
+    - A single post-retrieval task is needed in isolation (screen one abstract, summarize one paper).
+    - A systematic review needs a documented, schema-validated methodology.
+  avoid_when:
+    - No papers have been retrieved yet; run a retrieval skill first.
+    - The task is only to build a search strategy; use generate-search-queries.
+    - The task is bibliographic format conversion.
+  prefer_over:
+    - freeform-summarization
+  combine_with:
+    - generate-search-queries
+    - search-works-openalex
+    - search-records-hal
+    - search-records-sudoc
 
 tags:
   - prisma
@@ -28,6 +48,17 @@ tags:
 ---
 
 # synthesize-literature
+
+## Purpose
+
+A contract pack for the post-retrieval stages of a literature review. Each task
+is backed by a methodological prompt and a strict JSON schema. The CLI exposes
+four commands: `list`, `prompt`, `schema` and `validate`.
+
+This skill is a **task library** for post-retrieval analysis. It answers: *how to execute this step correctly*.
+Pipeline orchestration (what to do, in what order) is handled at the agent level.
+
+---
 
 ## When to use / When not to use
 
@@ -41,17 +72,6 @@ tags:
 
 - Papers have not yet been retrieved — retrieval must run first.
 - The task is only to build a search strategy.
-
----
-
-## Purpose
-
-A contract pack for the post-retrieval stages of a literature review. Each task
-is backed by a methodological prompt and a strict JSON schema. The CLI exposes
-three commands: `list`, `prompt`, `schema`, and `validate`.
-
-This skill is a **task library** for post-retrieval analysis. It answers: *how to execute this step correctly*.
-Pipeline orchestration (what to do, in what order) is handled at the agent level.
 
 ---
 
@@ -152,6 +172,45 @@ Exit code is `0` on success, `1` on validation failure.
 | 5b | `synthesize_papers_chronological` | `synthesize_papers_chronological.schema.json` | research_question, summaries[] |
 | 5c | `synthesize_papers_methodological` | `synthesize_papers_methodological.schema.json` | research_question, summaries[] |
 | 5d | `synthesize_papers_prisma` | `synthesize_papers_prisma.schema.json` | research_question, summaries[], screening_log[] |
+
+---
+
+## Output
+
+`list` returns the task inventory, `prompt` the methodological contract as
+markdown on stdout, `schema` the JSON Schema for a task, and `validate` a
+verdict object:
+
+```jsonc
+{ "valid": true,  "errors": [] }
+{ "valid": false, "errors": ["'decision' is a required property"] }
+```
+
+The *task* outputs themselves are produced by the agent, not by the CLI: each
+one is a JSON object conforming to the schema returned by `schema --task <name>`.
+Always run `validate` on them before chaining to the next step.
+
+---
+
+## Composition hints
+
+```
+generate-search-queries          ← build the query set
+      ↓
+  search-works-openalex / search-records-hal / search-records-sudoc
+      ↓
+synthesize-literature            ← this skill
+  screen_study_prisma            ← 1. include / exclude / uncertain
+  summarize_paper                ← 2. critical reading note
+  extract_metadata               ← 3. method and concept extraction
+  appraise_study_quality         ← 4. risk of bias
+  synthesize_papers_*            ← 5. thematic / chronological / methodological / PRISMA
+```
+
+The retrieval skills all emit the common record schema, so `title`, `abstract`
+and `doi` feed the screening and summarization tasks directly. Merge and
+deduplicate on `doi` across sources before screening; keep the screening log if
+a PRISMA synthesis is the goal, since `synthesize_papers_prisma` requires it.
 
 ---
 

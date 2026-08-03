@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "build_search_queries",
+  "title": "generate_search_queries",
   "type": "object",
   "additionalProperties": false,
   "required": [

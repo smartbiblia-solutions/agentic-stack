@@ -1,51 +1,142 @@
-# Catalogue des skills disponibles.
-# Ce fichier est lu directement depuis GitHub par la CLI.
-# Mettre à jour ce fichier lors de l'ajout d'une nouvelle skill.
+# Catalogue smartbiblia — skills et serveurs MCP.
+#
+# Ce fichier est lu directement depuis GitHub par la CLI : il fait autorité,
+# la CLI publiée sur PyPI n'en embarque aucune copie.
+#
+# Conventions (voir create-agent-skill / create-mcp-server) :
+#   - la clé de table est un ALIAS court, pratique en ligne de commande ;
+#   - `name` est le nom canonique, identique au nom du dossier ET au champ
+#     `name` du frontmatter. C'est sous ce nom que la CLI installe, parce
+#     qu'un runtime d'agent apparie le dossier et le frontmatter.
+#
+# Ne pas retirer `description`, `maturity`, `path`, `tags` : la CLI 0.1.0 déjà
+# publiée les lit tels quels et ignore le reste.
+
+catalog_version = 2
+
+# ─── Skills ───────────────────────────────────────────────────────────────────
 
 [skills.resolve-idref]
+name = "resolve-persons-idref"
 description = "Alignement automatique de noms de personnes vers des PPNs IdRef avec score de confiance"
-path = "skills/resolve-authorities-idref"
-maturity = "experimental"
+path = "skills/resolve-persons-idref"
+maturity = "beta"
 tags = ["authority", "french", "abes", "idref", "alignment"]
 
+[skills.search-idref]
+name = "search-authorities-idref"
+description = "Recherche d'autorités IdRef (personnes, collectivités, sujets Rameau) via Solr, et références bibliographiques liées à un PPN"
+path = "skills/search-authorities-idref"
+maturity = "experimental"
+tags = ["authority", "french", "abes", "idref", "solr"]
+
 [skills.sudoc]
+name = "search-records-sudoc"
 description = "Recherche dans le catalogue collectif SUDOC (livres, thèses, périodiques, manuscrits)"
 path = "skills/search-records-sudoc"
 maturity = "stable"
 tags = ["catalog", "french", "unimarc", "abes", "sudoc"]
 
 [skills.hal]
+name = "search-records-hal"
 description = "Recherche dans HAL, dépôt ouvert français (articles, thèses, rapports)"
 path = "skills/search-records-hal"
 maturity = "stable"
 tags = ["repository", "french", "open-access", "hal"]
 
 [skills.openalex]
+name = "search-works-openalex"
 description = "Recherche dans OpenAlex, la plus grande base bibliographique mondiale en accès ouvert"
 path = "skills/search-works-openalex"
 maturity = "stable"
 tags = ["global", "open-access", "openalex", "doi"]
 
 [skills.generate-queries]
+name = "generate-search-queries"
 description = "Génération de stratégies de recherche documentaire à partir d'une question de recherche (8-15 requêtes bilingues)"
 path = "skills/generate-search-queries"
 maturity = "stable"
 tags = ["search-strategy", "bilingual", "queries"]
 
 [skills.synthesize]
+name = "synthesize-literature"
 description = "Synthèse de littérature académique (screening PRISMA, résumé, appréciation qualité, synthèse thématique/chronologique)"
 path = "skills/synthesize-literature"
 maturity = "stable"
 tags = ["synthesis", "review", "prisma", "literature"]
 
 [skills.convert-unimarc]
+name = "convert-records-unimarc"
 description = "Conversion de notices UNIMARC entre formats XML, JSON et ISO 2709 binaire"
 path = "skills/convert-records-unimarc"
-maturity = "stable"
+maturity = "experimental"
 tags = ["unimarc", "marc", "conversion", "format"]
 
 [skills.dmp]
+name = "write-data-management-plan"
 description = "Rédaction de Plans de Gestion de Données (PGD/DMP) selon les principes FAIR"
 path = "skills/write-data-management-plan"
 maturity = "experimental"
 tags = ["dmp", "fair", "open-science", "research"]
+
+# ─── Serveurs MCP ─────────────────────────────────────────────────────────────
+#
+# `entrypoint` : fichier serveur dans le dossier installé.
+# `port`       : port par défaut en transport HTTP.
+# `env`        : variables lues par le serveur.
+# `env_required` : celles sans lesquelles il ne démarre pas utilement.
+
+[mcp.openalex]
+name = "openalex"
+description = "Serveur MCP OpenAlex : recherche d'œuvres, résolution de DOI, citations, classification par topic"
+path = "mcp/openalex"
+entrypoint = "mcp_server.py"
+maturity = "stable"
+port = 8011
+env = ["OPENALEX_API_KEY"]
+env_required = []
+tags = ["global", "open-access", "openalex", "doi"]
+
+[mcp.sudoc-sru]
+name = "sudoc-sru"
+description = "Serveur MCP Sudoc SRU : recherche, comptage et scan d'index sur le catalogue collectif français (UNIMARC)"
+path = "mcp/sudoc-sru"
+entrypoint = "mcp_server.py"
+maturity = "stable"
+port = 8012
+env = []
+env_required = []
+tags = ["catalog", "french", "unimarc", "abes", "sudoc"]
+
+[mcp.primo]
+name = "primo"
+description = "Serveur MCP Primo (Ex Libris) : recherche dans un discovery layer institutionnel. Nécessite une clé et une vue (vid/tab/scope)"
+path = "mcp/primo"
+entrypoint = "mcp_server.py"
+maturity = "stable"
+port = 8013
+env = ["PRIMO_API_KEY", "PRIMO_REGION", "PRIMO_VID", "PRIMO_TAB", "PRIMO_SCOPE", "PRIMO_INST", "PRIMO_LANG"]
+env_required = ["PRIMO_API_KEY", "PRIMO_VID", "PRIMO_TAB", "PRIMO_SCOPE"]
+tags = ["discovery", "primo", "exlibris", "institutional"]
+
+[mcp.recherche-data-gouv]
+name = "recherche-data-gouv"
+description = "Serveur MCP Recherche Data Gouv : recherche Dataverse, métriques et blocs de métadonnées (lecture publique, sans clé)"
+path = "mcp/recherche-data-gouv"
+entrypoint = "mcp_server.py"
+maturity = "experimental"
+port = 8014
+env = ["RECHERCHE_DATA_GOUV_API_URL"]
+env_required = []
+tags = ["french", "data", "dataverse", "open-science"]
+
+[mcp.idref-resolver-api]
+name = "idref-resolver-api"
+description = "Serveur MCP IdRef resolver : alignement d'une personne sur un PPN IdRef à partir d'indices libres, avec abstention explicite si la preuve est insuffisante"
+path = "mcp/idref-resolver-api"
+entrypoint = "mcp_server.py"
+maturity = "experimental"
+port = 8015
+env = ["IDREF_API_URL", "IDREF_API_KEY"]
+env_required = ["IDREF_API_URL"]
+tags = ["french", "idref", "authority", "alignment", "abes", "qualinka"]

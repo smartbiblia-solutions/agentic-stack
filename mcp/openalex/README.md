@@ -51,20 +51,21 @@ Start the server with the transport of your choice:
 ```bash
 # stdio — the client launches and manages the process
 uv run mcp/openalex/mcp_server.py \
-  --api-key YOUR_OPENALEX_KEY \
   --transport stdio
 
 # sse — persistent server, SSE endpoint
 uv run mcp/openalex/mcp_server.py \
-  --api-key YOUR_OPENALEX_KEY \
   --host 0.0.0.0 --port 8011 --transport sse
 # → endpoint: http://localhost:8011/sse
 
-# streamable-http — persistent server, HTTP endpoint (recommended for HTTP mode)
+# http — persistent server, HTTP endpoint (recommended for HTTP mode)
 uv run mcp/openalex/mcp_server.py \
-  --api-key YOUR_OPENALEX_KEY \
-  --host 0.0.0.0 --port 8011 --transport streamable-http
+  --host 0.0.0.0 --port 8011 --transport http
 # → endpoint: http://localhost:8011/mcp
+
+# Add --stateless to serve HTTP without sessions: a new transport per
+# request, so nothing is pinned to a replica. Needed behind a load
+# balancer or with several uvicorn workers; rejected with --transport sse.
 ```
 
 ### 1.1 Claude Code
@@ -73,12 +74,12 @@ uv run mcp/openalex/mcp_server.py \
 # stdio (no persistent server needed — Claude Code manages the process)
 claude mcp add openalex -- \
   uv run /ABS/PATH/mcp/openalex/mcp_server.py \
-  --api-key YOUR_OPENALEX_KEY --transport stdio
+  --transport stdio
 
 # sse (start the server first with --transport sse)
 claude mcp add --transport sse openalex http://localhost:8011/sse
 
-# streamable-http (start the server first with --transport streamable-http)
+# streamable-http (start the server first with --transport http)
 claude mcp add --transport http openalex http://localhost:8011/mcp
 ```
 
@@ -99,15 +100,15 @@ or `%AppData%\Claude\claude_desktop_config.json` (Windows).
       "args": [
         "run",
         "/ABS/PATH/mcp/openalex/mcp_server.py",
-        "--api-key", "YOUR_OPENALEX_KEY",
         "--transport", "stdio"
-      ]
+      ],
+      "env": { "OPENALEX_API_KEY": "YOUR_OPENALEX_KEY" }
     }
   }
 }
 ```
 
-**streamable-http** (start the server first, then point Claude Desktop at it):
+**http** (start the server first, then point Claude Desktop at it):
 
 ```jsonc
 {
@@ -134,15 +135,15 @@ Restart Claude Desktop after saving; tools appear under the plug icon.
       "command": "uv",
       "args": [
         "run", "/ABS/PATH/mcp/openalex/mcp_server.py",
-        "--api-key", "YOUR_OPENALEX_KEY",
         "--transport", "stdio"
-      ]
+      ],
+      "env": { "OPENALEX_API_KEY": "YOUR_OPENALEX_KEY" }
     }
   }
 }
 ```
 
-**streamable-http** (start the server first):
+**http** (start the server first):
 
 ```jsonc
 {
@@ -158,9 +159,9 @@ Restart Claude Desktop after saving; tools appear under the plug icon.
 
 ```bash
 docker build -t mcp-openalex ./mcp/openalex
-docker run -p 8011:8011 mcp-openalex --api-key YOUR_OPENALEX_KEY
+docker run -p 8011:8011 -e OPENALEX_API_KEY=YOUR_OPENALEX_KEY mcp-openalex
 
-# Or start all three MCP servers at once
+# Or start every MCP server at once
 cp mcp/.env.example mcp/.env   # fill in OPENALEX_API_KEY
 docker compose -f mcp/compose.yml up --build
 ```
@@ -173,7 +174,7 @@ docker compose -f mcp/compose.yml up --build
 This works as a true single-step zero-install **only with `stdio`**: the client
 config embeds the `uv run <url>` command and the client manages the process itself.
 
-For `sse` or `streamable-http`, `uv run <url>` still starts a local server on
+For `sse` or `http`, `uv run <url>` still starts a local server on
 localhost — you would then need to register the endpoint separately, which is
 equivalent to Option 1 HTTP mode (just without cloning first).
 
@@ -182,7 +183,7 @@ equivalent to Option 1 HTTP mode (just without cloning first).
 ```bash
 claude mcp add openalex -- \
   uv run https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/main/mcp/openalex/mcp_server.py \
-  --api-key YOUR_OPENALEX_KEY --transport stdio
+  --transport stdio
 ```
 
 Check status: `claude mcp list` or `/mcp` inside a session.
@@ -197,9 +198,9 @@ Check status: `claude mcp list` or `/mcp` inside a session.
       "args": [
         "run",
         "https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/main/mcp/openalex/mcp_server.py",
-        "--api-key", "YOUR_OPENALEX_KEY",
         "--transport", "stdio"
-      ]
+      ],
+      "env": { "OPENALEX_API_KEY": "YOUR_OPENALEX_KEY" }
     }
   }
 }
@@ -219,9 +220,9 @@ Restart Claude Desktop after saving; tools appear under the plug icon.
       "args": [
         "run",
         "https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/main/mcp/openalex/mcp_server.py",
-        "--api-key", "YOUR_OPENALEX_KEY",
         "--transport", "stdio"
-      ]
+      ],
+      "env": { "OPENALEX_API_KEY": "YOUR_OPENALEX_KEY" }
     }
   }
 }
@@ -233,16 +234,20 @@ Restart Claude Desktop after saving; tools appear under the plug icon.
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--api-key` | — | OpenAlex API key. Also reads `OPENALEX_API_KEY` env var. |
 | `--host` | `0.0.0.0` | Bind host (HTTP/SSE modes). |
 | `--port` | `8011` | Bind port (HTTP/SSE modes). |
-| `--transport` | `streamable-http` | `stdio` \| `sse` \| `streamable-http`. |
+| `--transport` | `http` | `stdio` \| `http` \| `sse`. `streamable-http` is accepted as an alias of `http`. Also reads `MCP_TRANSPORT`. |
+| `--stateless` | off | Stateless HTTP: a new transport per request, so no session is pinned to a replica — required behind a load balancer or with several uvicorn workers. Rejected with `sse`. Also reads `MCP_STATELESS`. |
 | `--http-timeout` | `15.0` | Request timeout in seconds. |
 | `--max-retries` | `2` | Retry attempts on transient errors (429, 5xx). |
 | `--backoff-base` | `1.0` | Exponential backoff base in seconds. |
 | `--backoff-factor` | `2.0` | Backoff multiplier. |
 | `--jitter-max` | `0.25` | Max random jitter per retry in seconds. |
 | `--trace` | off | Include an HTTP trace log in every tool response. |
+
+The API key is read from the `OPENALEX_API_KEY` environment variable only —
+never a flag, because `argv` is visible in process listings and shell history.
+It is optional for OpenAlex (it buys you the polite pool).
 
 See full reference: `uv run mcp_server.py --help`.
 
@@ -252,7 +257,7 @@ See full reference: `uv run mcp_server.py --help`.
 
 ```bash
 # HTTP/SSE mode: check the endpoint is live (a 307/406 is normal without a handshake)
-curl -i http://localhost:8011/mcp    # streamable-http
+curl -i http://localhost:8011/mcp    # http
 curl -i http://localhost:8011/sse    # sse
 
 # stdio mode: check via the client's MCP panel
@@ -276,6 +281,43 @@ curl -i http://localhost:8011/sse    # sse
 - **stdio mode: server not found** — ensure `uv` is on the client's `PATH`
   and check the client's MCP logs. In stdio mode, the server logs to **stderr**
   only; **stdout** is reserved for the MCP protocol.
+
+---
+
+## Browser demo / Hugging Face Space
+
+[`demo/`](demo/) holds a **standalone** Gradio app that re-implements
+`search_works` and `classify_text` against the same OpenAlex endpoints and wraps
+them in a browser UI. It imports nothing from this folder: `demo/` is the Space
+root, so `mcp_server.py` does not exist there. The two tools are a hand-kept
+copy — same names, same arguments, same response shape. Change one, change the
+other.
+
+```bash
+cd demo
+uv run --with 'gradio[mcp]>=6,<7' --with httpx app.py
+# http://localhost:7860
+```
+
+Launched with `mcp_server=True`, it also serves those two tools at
+`/gradio_api/mcp/sse`. That endpoint is **demo-grade and secondary** — the
+canonical MCP endpoint is `mcp_server.py`, with the full tool set and no
+tightened result limits. Set `GRADIO_MCP_SERVER=false` wherever the real server
+is already reachable, so clients cannot bind to the wrong one.
+
+Check what it exposes:
+
+```bash
+curl -s localhost:7860/gradio_api/mcp/schema | python3 -m json.tool
+```
+
+`demo/` is a deployable Space as it stands — `demo/README.md` carries the YAML
+configuration block, and `demo/requirements.txt` is what the Space installs:
+
+```bash
+git remote add space https://huggingface.co/spaces/<owner>/<space-name>
+git subtree push --prefix=mcp/openalex/demo space main
+```
 
 ---
 

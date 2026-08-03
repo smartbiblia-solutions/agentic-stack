@@ -1,5 +1,5 @@
 ---
-name: search_records_hal
+name: search-records-hal
 description: >
   Search and retrieve records from HAL (Hyper Articles en Ligne), the French
   open repository, powered by Apache Solr. Use this skill whenever the user
@@ -10,21 +10,35 @@ description: >
   "HAL", "archives-ouvertes", "collection HAL", "portail HAL", "dépôt HAL",
   or any request to search French open-access deposits. Most HAL usage is
   collection-scoped — always ask for the collection code when it is not provided.
+version: "0.2.0"
+author: smartbiblia
+maturity: stable
+preferred_output: json
 metadata:
   {
-    "version": "0.1.0",
-    "author": "smartbiblia",
-    "maturity": "stable",
-    "preferred_output": "json",
-    "openclaw":
-      {	    
-        "always": true, "requires": { "bins": ["uv"], "env": ["HAL_HTTP_TIMEOUT", "HAL_MAX_RETRIES", "HAL_TRACE"], "config": [] },
-      },
-	"nanobot":
-      {	    
-        "always": true, "requires": { "bins": ["uv"], "env": ["HAL_HTTP_TIMEOUT", "HAL_MAX_RETRIES", "HAL_TRACE"] },
-      }
+    "openclaw": {
+      "always": true,
+      "requires": { "bins": ["uv"], "env": [], "config": [] }
+    }
   }
+
+selection:
+  use_when:
+    - The task targets a specific HAL collection or institutional portal.
+    - The user asks for French open-access deposits or francophone preprints.
+    - The search strategy produced queries with lang "fr" and HAL is a target source.
+    - BibTeX or TEI export from HAL is needed.
+    - Facets or publication trends over a HAL collection are required.
+  avoid_when:
+    - The task requires broad international scholarly coverage; use search-works-openalex.
+    - The task targets library holdings rather than deposits; use search-records-sudoc.
+    - DOI resolution is the primary goal.
+  prefer_over:
+    - generic-web-search
+  combine_with:
+    - generate-search-queries
+    - search-works-openalex
+    - synthesize-literature
 
 tags:
   - hal
@@ -35,22 +49,6 @@ tags:
 ---
 
 # search-records-hal
-
-## When to use / When not to use
-
-**Use this skill when:**
-
-- The task targets a specific HAL collection or institutional portal.
-- The user asks for French open-access deposits or francophone preprints.
-- The search strategy produced queries with lang "fr" and HAL is a target source.
-- BibTeX or TEI export from HAL is needed.
-
-**Do not use this skill when:**
-
-- The task requires broad international scholarly coverage.
-- DOI resolution is the primary goal.
-
----
 
 ## Purpose
 
@@ -81,6 +79,22 @@ without transformation.
 - When facets or trends are requested (e.g., by year), issue a facet-enabled query and always include a year histogram in the output.
 - Always request: facet=true, facet.field=publicationDateY_i, facet.limit=-1, facet.sort=index, facet.mincount=1. For trend-only, set rows=0 so no documents are returned while facets are computed.
 - In all JSON responses, include a facets object with publicationDateY_i as an array of { value: <year>, count: <int> } buckets. Do not omit facets when returned=0 or results=[]. If no buckets are returned, set publicationDateY_i: [] rather than leaving facets empty.
+
+---
+
+## When to use / When not to use
+
+**Use this skill when:**
+
+- The task targets a specific HAL collection or institutional portal.
+- The user asks for French open-access deposits or francophone preprints.
+- The search strategy produced queries with lang "fr" and HAL is a target source.
+- BibTeX or TEI export from HAL is needed.
+
+**Do not use this skill when:**
+
+- The task requires broad international scholarly coverage.
+- DOI resolution is the primary goal.
 
 ---
 
@@ -129,7 +143,6 @@ uv run ./skills/search-records-hal/scripts/cli.py search \
 | `--group-limit` | int | `1` | Group size. |
 | `--wt` | enum | `json` | Response format: `json`, `xml`, `xml-tei`, `bibtex`, `endnote`, `rss`, `atom`, `csv`. |
 | `--indent` | flag | off | Add `indent=true` to the Solr request. |
-| `--trace` | flag | off | Append HTTP trace info to output JSON. |
 
 > **Note on `--wt`**: only `json` produces structured output through this CLI.
 > Other formats (`bibtex`, `xml-tei`, etc.) return an error payload with the
@@ -185,20 +198,31 @@ Always check the `error` field in the output.
 
 ---
 
+## Composition hints
+
+```
+generate-search-queries          ← build the query set first
+  → search-records-hal           ← this skill (French open-access deposits)
+  → search-works-openalex        ← run in parallel for international literature
+  → search-records-sudoc         ← run in parallel for library holdings
+      ↓
+    synthesize-literature        ← screen, appraise, synthesize
+```
+
+Records are normalized to the common hub schema, so results from HAL, OpenAlex
+and Sudoc can be merged and deduplicated on `doi` before synthesis. Ask for the
+collection code before the first call — a global HAL query is rarely what the
+user means.
+
+---
+
 ## Environment variables
 
-Set in `./skills/search-records-hal/.env` or export in the shell.
+None. The HAL Search API is public and anonymous, so this skill ships no `.env`
+and no `.env.example`. The timeout, the retry count and the backoff are
+constants in `cli.py`.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `HAL_HTTP_TIMEOUT` | `20.0` | Request timeout (seconds) |
-| `HAL_MAX_RETRIES` | `2` | Retry attempts |
-| `HAL_BACKOFF_BASE` | `1.0` | Backoff base seconds |
-| `HAL_BACKOFF_FACTOR` | `2.0` | Backoff multiplier |
-| `HAL_JITTER_MAX` | `0.25` | Max jitter seconds |
-| `HAL_TRACE` | `0` | Set to `1` for global trace logging |
-
-Retried status codes: 429, 500, 502, 503, 504. Timeouts are also retried.
+Retried status codes: **429, 500, 502, 503, 504**; timeouts are retried too.
 
 ---
 

@@ -10,15 +10,31 @@ description: >
   text-processing skills when the source material is actual UNIMARC record data.
   Returns JSON status summaries plus converted payloads written to stdout or a file,
   depending on the command options.
+version: "0.2.0"
+author: smartbiblia
+maturity: experimental
+preferred_output: json
 metadata:
   {
-    "version": "0.1.0",
-    "author": "smartbiblia",
-    "maturity": "experimental",
-    "preferred_output": "json",
-	"nanobot":  { "always": true, "requires": { "bins": ["uv"], "env": [] } },
-    "openclaw": { "always": true, "requires": { "bins": ["uv"], "env": [], "config": [] } }
+    "openclaw": {
+      "always": true,
+      "requires": { "bins": ["uv"], "env": [], "config": [] }
+    }
   }
+
+selection:
+  use_when:
+    - The task is to convert UNIMARC records between XML, JSON and ISO 2709.
+    - A retrieval skill returned raw UNIMARC and the records must be reshaped.
+    - The leader length of a UNIMARC/XML file must be validated or repaired.
+  avoid_when:
+    - The records still have to be retrieved from a catalogue; use search-records-sudoc.
+    - The task is generic XML or JSON reshaping with no MARC semantics.
+    - The target format is a bibliographic style (BibTeX, CSL) rather than MARC.
+  prefer_over:
+    - generic-file-conversion
+  combine_with:
+    - search-records-sudoc
 
 tags:
   - unimarc
@@ -28,21 +44,6 @@ tags:
 ---
 
 # convert-records-unimarc
-
-## When to use / When not to use
-
-**Use this skill when:**
-
-- The task is to convert UNIMARC records between XML, JSON, and ISO 2709.
-- The user needs a local CLI for bibliographic record transformation using pymarc.
-- The task involves validating or repairing leader length before XML parsing.
-
-**Do not use this skill when:**
-
-- The task is to retrieve bibliographic records from external catalogs or APIs — use a retrieval skill instead.
-- The task is generic XML or JSON reshaping unrelated to MARC/UNIMARC semantics — use general file-processing methods instead.
-
----
 
 ## Purpose
 
@@ -58,6 +59,23 @@ This skill is for local format conversion, not remote retrieval. It is useful
 when an agent must ingest a UNIMARC record in one format, transform it into a
 pivot representation, and emit an equivalent record in another format for
 storage, downstream processing, or interoperability.
+
+---
+
+## When to use / When not to use
+
+**Use this skill when:**
+
+- The task is to convert UNIMARC records between XML, JSON, and ISO 2709.
+- The user needs a local CLI for bibliographic record transformation using pymarc.
+- The task involves validating or repairing leader length before XML parsing.
+
+**Do not use this skill when:**
+
+- The task is to retrieve bibliographic records from external catalogs or APIs — use a retrieval skill instead.
+- The task is generic XML or JSON reshaping unrelated to MARC/UNIMARC semantics — use general file-processing methods instead.
+
+---
 
 ## Subcommands
 
@@ -109,14 +127,6 @@ uv run ./skills/convert-records-unimarc/scripts/cli.py inspect \
 | `--input` | path | **required** | Input file path |
 | `--fix-leader` | flag | on | Repair XML leader length before parsing |
 
-## Environment variables
-
-This skill does not require network credentials.
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `PYTHONUTF8` | runtime-dependent | Recommended to keep UTF-8 behavior consistent |
-
 ## Output
 
 `inspect` emits strict JSON on stdout. `convert` emits strict JSON on stdout when
@@ -166,6 +176,25 @@ On error, the CLI emits JSON diagnostics:
 }
 ```
 
+## Composition hints
+
+This skill is a local transformation utility that typically sits after file
+acquisition and before downstream metadata analysis.
+
+```text
+search-records-sudoc          ← retrieve the records first (UNIMARC/XML)
+  → convert-records-unimarc   ← this skill
+      ↓
+    normalized JSON / XML / ISO 2709 artifact
+      ↓
+    downstream validation, storage or analysis
+```
+
+It performs no network access: give it a file (or a payload written by a
+retrieval skill) and it returns another serialization of the same records.
+
+---
+
 ## Failure modes
 
 - Exit code is `0` on success.
@@ -206,14 +235,3 @@ uv run ./skills/convert-records-unimarc/scripts/cli.py convert \
   --from json --to iso2709 --input ./record.json --output ./record.mrc
 ```
 
-## Composition hints
-
-This skill is a local transformation utility that typically sits after file
-acquisition and before downstream metadata analysis.
-
-```text
-[input file or retrieved record]
-  -> convert-records-unimarc
-  -> normalized JSON/XML/ISO artifact
-  -> downstream validation / storage / analysis
-```

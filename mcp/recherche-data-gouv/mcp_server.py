@@ -1,18 +1,24 @@
 #!/usr/bin/env -S uv run
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ['fastmcp>=2.0', 'httpx']
+# dependencies = ['fastmcp>=3.4,<4', 'httpx']
 # ///
 """Recherche Data Gouv MCP server.
 
 Exposes public Dataverse Search, Metrics, and metadata-block GET endpoints for
 Recherche Data Gouv. No API key is required for public reads.
+
+Transport is a flag: --transport stdio | http | sse (default http;
+"streamable-http" is accepted as an alias of "http"). Add --stateless to serve
+HTTP with a new transport per request, so no session is pinned to a replica —
+what a load-balanced or multi-worker deployment needs. Incompatible with sse.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import random
 import time
 from typing import Any
@@ -49,17 +55,36 @@ def _parse_args() -> argparse.Namespace:
         description="Recherche Data Gouv MCP server",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Dataverse API base URL")
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8014)
-    parser.add_argument("--transport", default="streamable-http", choices=["stdio", "sse", "streamable-http"])
+    parser.add_argument(
+        "--base-url",
+        default=os.environ.get("RECHERCHE_DATA_GOUV_API_URL", DEFAULT_BASE_URL),
+        help="Dataverse API base URL",
+    )
+    parser.add_argument("--host", default=os.environ.get("MCP_HOST", "0.0.0.0"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("MCP_PORT", "8014")))
+    parser.add_argument(
+        "--transport",
+        default=os.environ.get("MCP_TRANSPORT", "http"),
+        choices=["stdio", "http", "sse", "streamable-http"],
+        help='Transport ("streamable-http" is an alias of "http")',
+    )
+    parser.add_argument(
+        "--stateless",
+        action="store_true",
+        default=os.environ.get("MCP_STATELESS", "").lower() in ("1", "true", "yes"),
+        help="Stateless HTTP: new transport per request, no session affinity",
+    )
     parser.add_argument("--http-timeout", type=float, default=20.0)
     parser.add_argument("--max-retries", type=int, default=2)
     parser.add_argument("--backoff-base", type=float, default=1.0)
     parser.add_argument("--backoff-factor", type=float, default=2.0)
     parser.add_argument("--jitter-max", type=float, default=0.25)
     parser.add_argument("--trace", action="store_true", default=False)
-    return parser.parse_args()
+    ns = parser.parse_args()
+    # FastMCP raises on this combination; fail here instead, with a usage message.
+    if ns.stateless and ns.transport == "sse":
+        parser.error("--stateless is not supported by the sse transport; use --transport http")
+    return ns
 
 
 args = _parse_args()
@@ -74,7 +99,22 @@ BACKOFF_FACTOR = max(1.0, args.backoff_factor)
 JITTER_MAX = max(0.0, args.jitter_max)
 TRACE_DEFAULT = args.trace
 
-mcp = FastMCP("recherche-data-gouv")
+mcp = FastMCP(
+    name="recherche-data-gouv",
+    instructions=(
+        "Recherche Data Gouv connector — search the French national research data "
+        "repository (Dataverse), read dataset and dataverse metadata, and fetch "
+        "usage metrics. Public reads only; no API key required."
+    ),
+)
+
+# One pooled client for the process. Opening an AsyncClient per call would
+# rebuild the connection pool — and replay the TLS handshake — every time.
+HTTP = httpx.AsyncClient(
+    timeout=HTTP_TIMEOUT,
+    follow_redirects=True,
+    headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+)
 
 
 def _backoff_sleep_seconds(attempt: int) -> float:
@@ -89,66 +129,65 @@ async def _get_json(path: str, params: list[tuple[str, str]] | None = None, *, t
     url = f"{BASE_URL}/{path.lstrip('/')}"
     request_params = params or []
 
-    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}) as client:
-        last_status: int | None = None
-        last_error: str | None = None
-        for attempt in range(MAX_RETRIES):
-            t0 = time.perf_counter()
-            try:
+    last_status: int | None = None
+    last_error: str | None = None
+    for attempt in range(MAX_RETRIES):
+        t0 = time.perf_counter()
+        try:
+            if trace:
+                trace_events.append({
+                    "event": "http_request",
+                    "method": "GET",
+                    "url": url,
+                    "params": request_params,
+                    "attempt": attempt + 1,
+                    "max_retries": MAX_RETRIES,
+                })
+            resp = await HTTP.get(url, params=request_params)
+            last_status = resp.status_code
+            if trace:
+                trace_events.append({
+                    "event": "http_response",
+                    "status_code": resp.status_code,
+                    "attempt": attempt + 1,
+                    "elapsed_ms": int((time.perf_counter() - t0) * 1000),
+                })
+
+            if resp.status_code == 200:
                 if trace:
                     trace_events.append({
-                        "event": "http_request",
-                        "method": "GET",
-                        "url": url,
-                        "params": request_params,
+                        "event": "http_success",
                         "attempt": attempt + 1,
-                        "max_retries": MAX_RETRIES,
+                        "total_elapsed_ms": int((time.perf_counter() - started) * 1000),
                     })
-                resp = await client.get(url, params=request_params, headers={"Accept": "application/json"})
-                last_status = resp.status_code
+                return resp.json(), trace_events
+
+            if resp.status_code in RETRIED_STATUS and attempt < MAX_RETRIES - 1:
+                sleep_s = _backoff_sleep_seconds(attempt)
                 if trace:
                     trace_events.append({
-                        "event": "http_response",
+                        "event": "http_retry_sleep",
                         "status_code": resp.status_code,
-                        "attempt": attempt + 1,
-                        "elapsed_ms": int((time.perf_counter() - t0) * 1000),
+                        "sleep_s": round(sleep_s, 3),
                     })
+                await asyncio.sleep(sleep_s)
+                continue
 
-                if resp.status_code == 200:
-                    if trace:
-                        trace_events.append({
-                            "event": "http_success",
-                            "attempt": attempt + 1,
-                            "total_elapsed_ms": int((time.perf_counter() - started) * 1000),
-                        })
-                    return resp.json(), trace_events
+            resp.raise_for_status()
 
-                if resp.status_code in RETRIED_STATUS and attempt < MAX_RETRIES - 1:
-                    sleep_s = _backoff_sleep_seconds(attempt)
-                    if trace:
-                        trace_events.append({
-                            "event": "http_retry_sleep",
-                            "status_code": resp.status_code,
-                            "sleep_s": round(sleep_s, 3),
-                        })
-                    await asyncio.sleep(sleep_s)
-                    continue
-
-                resp.raise_for_status()
-
-            except httpx.TimeoutException as exc:
-                last_error = f"timeout: {exc}"
-                if trace:
-                    trace_events.append({"event": "http_timeout", "attempt": attempt + 1, "message": str(exc)})
-                if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(_backoff_sleep_seconds(attempt))
-                    continue
-                raise
-            except httpx.HTTPError as exc:
-                last_error = f"http_error: {exc}"
-                if trace:
-                    trace_events.append({"event": "http_error", "attempt": attempt + 1, "message": str(exc)})
-                raise
+        except httpx.TimeoutException as exc:
+            last_error = f"timeout: {exc}"
+            if trace:
+                trace_events.append({"event": "http_timeout", "attempt": attempt + 1, "message": str(exc)})
+            if attempt < MAX_RETRIES - 1:
+                await asyncio.sleep(_backoff_sleep_seconds(attempt))
+                continue
+            raise
+        except httpx.HTTPError as exc:
+            last_error = f"http_error: {exc}"
+            if trace:
+                trace_events.append({"event": "http_error", "attempt": attempt + 1, "message": str(exc)})
+            raise
 
     raise RuntimeError(
         f"Recherche Data Gouv: failed after {MAX_RETRIES} attempts on {url} "
@@ -336,4 +375,13 @@ if __name__ == "__main__":
     if args.transport == "stdio":
         mcp.run(transport="stdio")
     else:
-        mcp.run(transport=args.transport, host=args.host, port=args.port)
+        # stateless_http=True builds a fresh transport per request, so no session
+        # is pinned to a replica — required behind a load balancer or several
+        # uvicorn workers. Off by default: a single long-lived process is cheaper
+        # stateful, and stdio clients never reach this branch.
+        mcp.run(
+            transport=args.transport,
+            host=args.host,
+            port=args.port,
+            stateless_http=args.stateless,
+        )

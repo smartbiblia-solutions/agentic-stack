@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "requests",
+#   "httpx",
 # ]
 # ///
 
@@ -17,27 +17,22 @@ Connector Sudoc SRU — CLI autonome (runs with `uv run`)
 Interroge le catalogue Sudoc via le protocole SRU 1.1.
 Données encodées UTF-8, format UNIMARC encapsulé en XML.
 
-Variables d'environnement :
-  SUDOC_HTTP_TIMEOUT     (float, défaut 30.0)
-  SUDOC_MAX_RETRIES      (int,   défaut 3)
-  SUDOC_BACKOFF_BASE     (float, défaut 1.0)
-  SUDOC_BACKOFF_FACTOR   (float, défaut 2.0)
-  SUDOC_JITTER_MAX       (float, défaut 0.25)
-  SUDOC_TRACE            ("0"|"1", défaut "0")
+Le service est public et anonyme : aucune variable d'environnement, aucune clé.
+Le délai d'attente, le nombre de tentatives et le backoff sont des constantes
+ci-dessous — ce sont des propriétés du connecteur, pas de l'installation.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import random
 import re
+import sys
 import time
 import xml.etree.ElementTree as ET
-from typing import Any
 
-import requests
+import httpx
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION : config
@@ -46,26 +41,16 @@ import requests
 SRU_BASE_URL = "https://www.sudoc.abes.fr/cbs/sru/"
 SRU_NS = {"srw": "http://www.loc.gov/zing/srw/"}
 
-def _env_float(name: str, default: float) -> float:
-    v = os.getenv(name, "").strip()
-    try:
-        return float(v) if v else default
-    except ValueError:
-        return default
+HTTP_TIMEOUT = 30.0
+MAX_RETRIES = 3
+BACKOFF_BASE = 1.0
+BACKOFF_FACTOR = 2.0
+JITTER_MAX = 0.25
+RETRIED_STATUS = {429, 500, 502, 503, 504}
 
-def _env_int(name: str, default: int) -> int:
-    v = os.getenv(name, "").strip()
-    try:
-        return int(v) if v else default
-    except ValueError:
-        return default
-
-HTTP_TIMEOUT   = _env_float("SUDOC_HTTP_TIMEOUT",   30.0)
-MAX_RETRIES    = max(1, _env_int("SUDOC_MAX_RETRIES", 3))
-BACKOFF_BASE   = max(0.0, _env_float("SUDOC_BACKOFF_BASE",   1.0))
-BACKOFF_FACTOR = max(1.0, _env_float("SUDOC_BACKOFF_FACTOR", 2.0))
-JITTER_MAX     = max(0.0, _env_float("SUDOC_JITTER_MAX",     0.25))
-TRACE_DEFAULT  = os.getenv("SUDOC_TRACE", "0").strip() in ("1", "true", "True", "yes")
+# Un seul client poolé pour le processus : httpx.get() reconstruirait le client
+# — et rejouerait la poignée de main TLS — à chaque page paginée.
+HTTP = httpx.Client(timeout=HTTP_TIMEOUT, follow_redirects=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -151,104 +136,29 @@ def build_sru_url(
 # SECTION : HTTP layer with retry / backoff
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _backoff_sleep(attempt: int) -> float:
-    base = BACKOFF_BASE * (BACKOFF_FACTOR ** attempt)
-    jitter = random.uniform(0.0, JITTER_MAX) if JITTER_MAX > 0 else 0.0
-    return base + jitter
+def _sleep(attempt: int) -> None:
+    delay = BACKOFF_BASE * (BACKOFF_FACTOR ** (attempt - 1))
+    time.sleep(delay + random.uniform(0.0, JITTER_MAX))
 
-def _should_retry(status_code: int) -> bool:
-    return status_code in (429, 500, 502, 503, 504)
 
-def _get_xml(
-    url: str,
-    *,
-    max_retries: int | None = None,
-    timeout: float | None = None,
-    trace: bool = False,
-) -> tuple[ET.Element, list[dict]]:
+def _get_xml(url: str) -> ET.Element:
     """
-    GET a URL and return parsed XML root + optional trace events.
-    Retries on transient errors with exponential backoff.
+    GET a pre-built SRU URL and return the parsed XML root.
+    Retries transient failures with exponential backoff.
     """
-    _max = MAX_RETRIES if max_retries is None else max(1, int(max_retries))
-    _timeout = HTTP_TIMEOUT if timeout is None else float(timeout)
-    trace_events: list[dict] = []
-    started = time.perf_counter()
-
-    last_status: int | None = None
-    last_error: str | None = None
-
-    for attempt in range(_max):
-        t0 = time.perf_counter()
-        if trace:
-            trace_events.append({
-                "event": "http_request",
-                "method": "GET",
-                "url": url,
-                "attempt": attempt + 1,
-                "max_retries": _max,
-                "timeout_s": _timeout,
-            })
+    for attempt in range(1, MAX_RETRIES + 1):
         try:
-            resp = requests.get(url, timeout=_timeout)
-            last_status = resp.status_code
-
-            if trace:
-                trace_events.append({
-                    "event": "http_response",
-                    "status_code": resp.status_code,
-                    "attempt": attempt + 1,
-                    "elapsed_ms": int((time.perf_counter() - t0) * 1000),
-                })
-
-            if resp.status_code == 200:
-                root = ET.fromstring(resp.content.decode("utf-8"))
-                if trace:
-                    trace_events.append({
-                        "event": "http_success",
-                        "total_elapsed_ms": int((time.perf_counter() - started) * 1000),
-                    })
-                return root, trace_events
-
-            if _should_retry(resp.status_code) and attempt < _max - 1:
-                sleep_s = _backoff_sleep(attempt)
-                if trace:
-                    trace_events.append({
-                        "event": "http_retry_sleep",
-                        "status_code": resp.status_code,
-                        "sleep_s": round(sleep_s, 3),
-                    })
-                time.sleep(sleep_s)
+            resp = HTTP.get(url)
+            if resp.status_code in RETRIED_STATUS and attempt < MAX_RETRIES:
+                _sleep(attempt)
                 continue
-
             resp.raise_for_status()
-
-        except requests.exceptions.Timeout as e:
-            last_error = f"timeout: {e}"
-            if trace:
-                trace_events.append({
-                    "event": "http_timeout",
-                    "attempt": attempt + 1,
-                    "elapsed_ms": int((time.perf_counter() - t0) * 1000),
-                })
-            if attempt < _max - 1:
-                sleep_s = _backoff_sleep(attempt)
-                if trace:
-                    trace_events.append({"event": "http_retry_sleep", "reason": "timeout", "sleep_s": round(sleep_s, 3)})
-                time.sleep(sleep_s)
-                continue
-            raise
-
-        except requests.exceptions.RequestException as e:
-            last_error = str(e)
-            if trace:
-                trace_events.append({"event": "http_error", "attempt": attempt + 1, "message": str(e)})
-            raise
-
-    raise RuntimeError(
-        f"Sudoc SRU: failed after {_max} attempts on {url} "
-        f"(status={last_status}, error={last_error})"
-    )
+            return ET.fromstring(resp.content.decode("utf-8"))
+        except (httpx.TimeoutException, httpx.TransportError):
+            if attempt == MAX_RETRIES:
+                raise
+            _sleep(attempt)
+    raise RuntimeError(f"Sudoc SRU : échec après {MAX_RETRIES} tentatives sur {url}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -442,8 +352,14 @@ def _format_record(record: ET.Element) -> dict:
     # ── Physical description ─────────────────────────────────────────────────
     physical_desc = _first_subfield(record, "215", "a")
 
+    sudoc_url = f"https://www.sudoc.fr/{ppn}" if ppn else None
+
     return {
+        # Identity anchors, shared by every connector in the repo.
+        # `ppn` / `sudoc_url` stay exposed under their native Sudoc names.
         "source": "sudoc",
+        "id": ppn,
+        "url": sudoc_url,
         "ppn": ppn,
         "title": title,
         "authors": authors if authors else corp_authors,
@@ -461,7 +377,7 @@ def _format_record(record: ET.Element) -> dict:
         "physical_desc": physical_desc,
         "notes": notes if notes else None,
         "urls": urls if urls else None,
-        "sudoc_url": f"https://www.sudoc.fr/{ppn}" if ppn else None,
+        "sudoc_url": sudoc_url,
     }
 
 
@@ -477,29 +393,19 @@ def _first_subfield_in_df(df: ET.Element, code: str) -> str | None:
 # SECTION : SRU operations
 # ══════════════════════════════════════════════════════════════════════════════
 
-def count_records(
-    query: str,
-    *,
-    trace: bool | None = None,
-    http_timeout: float | None = None,
-    max_retries: int | None = None,
-) -> dict:
+def count_records(query: str) -> dict:
     """
     Return the total number of records matching a SRU query without fetching them.
     Useful for estimating corpus size before a full fetch.
     """
-    trace_eff = TRACE_DEFAULT if trace is None else bool(trace)
     encoded = encode_query(query)
     url = build_sru_url(encoded, start_record=1, maximum_records=1)
 
-    root, tevents = _get_xml(url, max_retries=max_retries, timeout=http_timeout, trace=trace_eff)
+    root = _get_xml(url)
     el = root.find(".//srw:numberOfRecords", namespaces=SRU_NS)
     n = int(el.text) if el is not None and el.text else 0
 
-    out: dict = {"query": query, "total_found": n, "url_used": url}
-    if trace_eff:
-        out["trace"] = tevents
-    return out
+    return {"query": query, "total_found": n, "url_used": url, "error": None}
 
 
 def search(
@@ -514,9 +420,6 @@ def search(
     year_from: int | None = None,
     year_to: int | None = None,
     year_exact: int | None = None,
-    trace: bool | None = None,
-    http_timeout: float | None = None,
-    max_retries: int | None = None,
 ) -> dict:
     """
     Search the Sudoc catalogue and return normalised records.
@@ -566,9 +469,6 @@ def search(
     year_exact : int | None
         Exact publication year (APU = year_exact). Overrides year_from/year_to.
     """
-    trace_eff = TRACE_DEFAULT if trace is None else bool(trace)
-    trace_events: list[dict] = []
-
     # ── Build the full query by appending limitations ─────────────────────────
     # Limitations (TDO, LAN, LAI, PAY, PAI, APU) MUST always be combined with
     # at least one regular index. We combine them with `and`.
@@ -605,21 +505,18 @@ def search(
 
     # ── First call: get total count ────────────────────────────────────────────
     count_url = build_sru_url(encoded, start_record=1, maximum_records=1)
-    root_c, t = _get_xml(count_url, max_retries=max_retries, timeout=http_timeout, trace=trace_eff)
-    trace_events.extend(t)
+    root_c = _get_xml(count_url)
     count_el = root_c.find(".//srw:numberOfRecords", namespaces=SRU_NS)
     total = int(count_el.text) if count_el is not None and count_el.text else 0
 
     if total == 0:
-        out: dict = {
+        return {
             "total_found": 0,
             "returned": 0,
             "results": [],
             "query_used": full_query,
+            "error": None,
         }
-        if trace_eff:
-            out["trace"] = trace_events
-        return out
 
     # ── Paginate to collect up to max_results records ─────────────────────────
     to_fetch = min(max_results, total, 1000)
@@ -629,8 +526,7 @@ def search(
     for start in range(1, to_fetch + 1, batch_size):
         this_batch = min(batch_size, to_fetch - len(records))
         url = build_sru_url(encoded, start_record=start, maximum_records=this_batch)
-        root_r, t = _get_xml(url, max_retries=max_retries, timeout=http_timeout, trace=trace_eff)
-        trace_events.extend(t)
+        root_r = _get_xml(url)
 
         for srw_rec in root_r.findall(".//srw:record", namespaces=SRU_NS):
             rd = srw_rec.find("./srw:recordData", namespaces=SRU_NS)
@@ -646,32 +542,23 @@ def search(
         # Small courtesy pause between pages
         time.sleep(0.2)
 
-    out = {
+    return {
         "total_found": total,
         "returned": len(records),
         "results": records,
         "query_used": full_query,
+        "error": None,
     }
-    if trace_eff:
-        out["trace"] = trace_events
-    return out
 
 
-def lookup_by_ppn(
-    ppn: str,
-    *,
-    trace: bool | None = None,
-    http_timeout: float | None = None,
-    max_retries: int | None = None,
-) -> dict:
+def lookup_by_ppn(ppn: str) -> dict:
     """
     Fetch a single Sudoc record by its PPN (Pica Production Number).
     Returns the normalised record dict, or an error if not found.
     """
-    trace_eff = TRACE_DEFAULT if trace is None else bool(trace)
     encoded = encode_query(f"ppn={ppn}")
     url = build_sru_url(encoded, start_record=1, maximum_records=1)
-    root, tevents = _get_xml(url, max_retries=max_retries, timeout=http_timeout, trace=trace_eff)
+    root = _get_xml(url)
 
     recs = root.findall(".//srw:record", namespaces=SRU_NS)
     result: dict | None = None
@@ -683,35 +570,22 @@ def lookup_by_ppn(
                 result = _format_record(unimarc)
                 break
 
-    out: dict
     if result:
-        out = {"total_found": 1, "returned": 1, "results": [result]}
-    else:
-        out = {"total_found": 0, "returned": 0, "results": [],
-               "error": f"PPN not found in Sudoc: '{ppn}'"}
-
-    if trace_eff:
-        out["trace"] = tevents
-    return out
+        return {"total_found": 1, "returned": 1, "results": [result], "error": None}
+    return {"total_found": 0, "returned": 0, "results": [],
+            "error": f"PPN not found in Sudoc: '{ppn}'"}
 
 
-def lookup_by_isbn(
-    isbn: str,
-    *,
-    trace: bool | None = None,
-    http_timeout: float | None = None,
-    max_retries: int | None = None,
-) -> dict:
+def lookup_by_isbn(isbn: str) -> dict:
     """
     Fetch Sudoc record(s) by ISBN (hyphens optional; ISBN-10 and ISBN-13 both accepted).
     Note: one ISBN may match multiple records (different editions, holdings, etc.).
     """
-    trace_eff = TRACE_DEFAULT if trace is None else bool(trace)
     # Strip hyphens — Sudoc accepts both forms but the clean form is more reliable
     clean_isbn = isbn.replace("-", "")
     encoded = encode_query(f"isb={clean_isbn}")
     url = build_sru_url(encoded, start_record=1, maximum_records=10)
-    root, tevents = _get_xml(url, max_retries=max_retries, timeout=http_timeout, trace=trace_eff)
+    root = _get_xml(url)
 
     records = []
     count_el = root.find(".//srw:numberOfRecords", namespaces=SRU_NS)
@@ -724,15 +598,13 @@ def lookup_by_isbn(
             if unimarc is not None:
                 records.append(_format_record(unimarc))
 
-    out: dict = {
+    return {
         "total_found": total,
         "returned": len(records),
         "results": records,
         "isbn_queried": isbn,
+        "error": None,
     }
-    if trace_eff:
-        out["trace"] = tevents
-    return out
 
 
 def scan_index(
@@ -741,9 +613,6 @@ def scan_index(
     *,
     maximum_terms: int = 25,
     response_position: int = 1,
-    trace: bool | None = None,
-    http_timeout: float | None = None,
-    max_retries: int | None = None,
 ) -> dict:
     """
     Browse a Sudoc index alphabetically starting from `term` (SRU scan operation).
@@ -760,8 +629,6 @@ def scan_index(
     response_position : int
         Position of `term` in the returned list (default 1 = first item).
     """
-    trace_eff = TRACE_DEFAULT if trace is None else bool(trace)
-
     scan_clause = f"{index_key}%3D{term}"
     url = (
         f"{SRU_BASE_URL}?operation=scan&version=1.1"
@@ -769,7 +636,7 @@ def scan_index(
         f"&responsePosition={response_position}"
         f"&maximumTerms={maximum_terms}"
     )
-    root, tevents = _get_xml(url, max_retries=max_retries, timeout=http_timeout, trace=trace_eff)
+    root = _get_xml(url)
 
     # Parse scan response: terms are in <srw:terms><srw:term><srw:value> ...
     terms: list[dict] = []
@@ -781,14 +648,12 @@ def scan_index(
             "count":   int(count_el.text) if count_el is not None and count_el.text else None,
         })
 
-    out: dict = {
+    return {
         "index": index_key,
         "start_term": term,
         "terms": terms,
+        "error": None,
     }
-    if trace_eff:
-        out["trace"] = tevents
-    return out
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -796,7 +661,8 @@ def scan_index(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _print_json(data: object) -> int:
-    print(json.dumps(data, ensure_ascii=False, indent=2))
+    json.dump(data, sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
     return 0
 
 
@@ -830,22 +696,18 @@ def main() -> int:
     ap_s.add_argument("--year-from",  type=int, default=None, help="Lower bound publication year (inclusive)")
     ap_s.add_argument("--year-to",    type=int, default=None, help="Upper bound publication year (inclusive)")
     ap_s.add_argument("--year-exact", type=int, default=None, help="Exact publication year")
-    ap_s.add_argument("--trace", action="store_true", help="Include HTTP trace in JSON output")
 
     # ── lookup-by-ppn ─────────────────────────────────────────────────────────
     ap_p = sub.add_parser("lookup-by-ppn", help="Fetch a single record by Sudoc PPN.")
     ap_p.add_argument("--ppn", required=True, help="Sudoc PPN (e.g. 070685045)")
-    ap_p.add_argument("--trace", action="store_true")
 
     # ── lookup-by-isbn ────────────────────────────────────────────────────────
     ap_i = sub.add_parser("lookup-by-isbn", help="Fetch record(s) by ISBN (10 or 13, hyphens optional).")
     ap_i.add_argument("--isbn", required=True, help="ISBN with or without hyphens")
-    ap_i.add_argument("--trace", action="store_true")
 
     # ── count ─────────────────────────────────────────────────────────────────
     ap_c = sub.add_parser("count", help="Return total number of records matching a query (no data fetched).")
     ap_c.add_argument("--query", required=True, help="SRU query (same syntax as search)")
-    ap_c.add_argument("--trace", action="store_true")
 
     # ── scan ──────────────────────────────────────────────────────────────────
     ap_sc = sub.add_parser(
@@ -856,44 +718,43 @@ def main() -> int:
     ap_sc.add_argument("--term",  required=True, help="Starting term to scan from")
     ap_sc.add_argument("--max-terms",         type=int, default=25, help="Number of terms to return (default 25)")
     ap_sc.add_argument("--response-position", type=int, default=1,  help="Position of --term in the list (default 1)")
-    ap_sc.add_argument("--trace", action="store_true")
 
     args = ap.parse_args()
-    common: dict[str, Any] = {"trace": bool(getattr(args, "trace", False))}
 
-    if args.cmd == "search":
-        data = search(
-            query=args.query,
-            max_results=args.max_results,
-            doc_type=args.doc_type,
-            language=args.language,
-            lang_major=args.lang_major,
-            country=args.country,
-            country_major=args.country_major,
-            year_from=args.year_from,
-            year_to=args.year_to,
-            year_exact=args.year_exact,
-            **common,
-        )
-        return _print_json(data)
+    try:
+        if args.cmd == "search":
+            return _print_json(search(
+                query=args.query,
+                max_results=args.max_results,
+                doc_type=args.doc_type,
+                language=args.language,
+                lang_major=args.lang_major,
+                country=args.country,
+                country_major=args.country_major,
+                year_from=args.year_from,
+                year_to=args.year_to,
+                year_exact=args.year_exact,
+            ))
 
-    if args.cmd == "lookup-by-ppn":
-        return _print_json(lookup_by_ppn(ppn=args.ppn, **common))
+        if args.cmd == "lookup-by-ppn":
+            return _print_json(lookup_by_ppn(args.ppn))
 
-    if args.cmd == "lookup-by-isbn":
-        return _print_json(lookup_by_isbn(isbn=args.isbn, **common))
+        if args.cmd == "lookup-by-isbn":
+            return _print_json(lookup_by_isbn(args.isbn))
 
-    if args.cmd == "count":
-        return _print_json(count_records(query=args.query, **common))
+        if args.cmd == "count":
+            return _print_json(count_records(args.query))
 
-    if args.cmd == "scan":
-        return _print_json(scan_index(
-            index_key=args.index,
-            term=args.term,
-            maximum_terms=args.max_terms,
-            response_position=args.response_position,
-            **common,
-        ))
+        if args.cmd == "scan":
+            return _print_json(scan_index(
+                index_key=args.index,
+                term=args.term,
+                maximum_terms=args.max_terms,
+                response_position=args.response_position,
+            ))
+    except Exception as exc:
+        # Contrat du corpus : l'erreur est une donnée, pas un code de sortie.
+        return _print_json({"total_found": 0, "returned": 0, "results": [], "error": str(exc)})
 
     return 2
 

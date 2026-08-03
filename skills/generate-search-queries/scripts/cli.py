@@ -16,8 +16,8 @@ except ImportError as e:  # pragma: no cover
 
 _SRC_DIR = pathlib.Path(__file__).resolve().parent
 _ROOT_DIR = _SRC_DIR.parent
-_PROMPT_PATH = _ROOT_DIR / "prompts" / "build_search_queries.md"
-_SCHEMA_PATH = _ROOT_DIR / "schemas" / "build_search_queries.schema.json"
+_PROMPT_PATH = _ROOT_DIR / "prompts" / "generate_search_queries.md"
+_SCHEMA_PATH = _ROOT_DIR / "schemas" / "generate_search_queries.schema.json"
 
 
 def load_prompt() -> str:
