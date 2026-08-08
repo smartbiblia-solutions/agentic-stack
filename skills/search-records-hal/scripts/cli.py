@@ -7,6 +7,7 @@
 
 - Docs: https://api.archives-ouvertes.fr/docs/search
 - Endpoint: https://api.archives-ouvertes.fr/search/
+- Reference endpoints: https://api.archives-ouvertes.fr/ref/
 
 This CLI is designed for agent/LLM usage:
 - strict JSON output on stdout
@@ -19,6 +20,8 @@ of the installation.
 
 Run:
   uv run skills/search-records-hal/scripts/cli.py search --collection XXX --q 'text:test'
+  uv run skills/search-records-hal/scripts/cli.py list-portals --contains these
+  uv run skills/search-records-hal/scripts/cli.py lookup-ref --ref structure --q 'text:CRIStAL'
 
 """
 
@@ -94,10 +97,74 @@ def normalize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
         "raw": doc,
     }
 
+def normalize_ref_doc(ref: str, doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize a HAL *reference* entry (AuréHAL) into a minimal record.
+
+    The reference endpoints do not share the document schema: a structure, an
+    author and a journal have almost nothing in common. Only the three identity
+    anchors are unified — `id`, `label`, `url` — and the source document is kept
+    verbatim under `raw`, because it is where the useful field for the next
+    query lives (e.g. `docid` for `structId_i`, `code` for a portal path).
+    """
+    label = (
+        _pick_first(doc.get("label_s"))
+        or _pick_first(doc.get("name"))
+        or _pick_first(doc.get("fullName_s"))
+        or _pick_first(doc.get("title_s"))
+        or _pick_first(doc.get("code_s"))
+        or _pick_first(doc.get("code"))
+    )
+    ref_id = _pick_first(doc.get("docid")) or _pick_first(doc.get("id"))
+    url = _pick_first(doc.get("url_s")) or _pick_first(doc.get("url"))
+
+    return {
+        "source": "hal",
+        "ref": ref,
+        "id": ref_id,
+        "label": label,
+        "code": _pick_first(doc.get("code")) or _pick_first(doc.get("code_s")),
+        "acronym": _pick_first(doc.get("acronym_s")),
+        "url": url,
+        "raw": doc,
+    }
+
+
+def normalize_facets(facet_counts: Optional[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    """Turn Solr's flat `[value, count, value, count, …]` lists into buckets.
+
+    Solr encodes a facet as one alternating array; every consumer has to unpack
+    it the same way, so the CLI does it once and publishes
+    `{field: [{"value": …, "count": …}]}`. The untouched Solr block stays under
+    `facets_raw` for anything this shape would lose (pivots, ranges, queries).
+    """
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for field, flat in ((facet_counts or {}).get("facet_fields") or {}).items():
+        buckets: List[Dict[str, Any]] = []
+        if isinstance(flat, list):
+            for i in range(0, len(flat) - 1, 2):
+                buckets.append({"value": flat[i], "count": flat[i + 1]})
+        out[field] = buckets
+    return out
+
+
 import httpx
 
 
 BASE_URL = "https://api.archives-ouvertes.fr/search/"
+REF_BASE_URL = "https://api.archives-ouvertes.fr/ref/"
+
+# AuréHAL reference endpoints that answer with a regular Solr envelope
+# (`response.numFound` + `response.docs`) and honour q/fl/rows/start/sort.
+# `instance` is deliberately absent: it ignores q and rows and always returns
+# the full list of portals, so `list-portals` filters it client-side instead.
+REF_ENDPOINTS = (
+    "structure",
+    "author",
+    "journal",
+    "anrproject",
+    "europeanproject",
+    "domain",
+)
 
 HTTP_TIMEOUT = 20.0
 MAX_RETRIES = 3
@@ -111,7 +178,7 @@ RETRIED_STATUS = {429, 500, 502, 503, 504}
 HTTP = httpx.Client(
     timeout=HTTP_TIMEOUT,
     follow_redirects=True,
-    headers={"User-Agent": "smartbiblia-hal-skill/0.2"},
+    headers={"User-Agent": "smartbiblia-hal-skill/0.3"},
 )
 
 
@@ -179,6 +246,23 @@ def parse_args() -> argparse.Namespace:
     ps.add_argument("--facet-field", action="append", default=[], help="Enable facets on field (repeatable)")
     ps.add_argument("--facet-mincount", type=int, default=1)
     ps.add_argument("--facet-limit", type=int, default=20)
+    ps.add_argument(
+        "--facet-sort",
+        choices=["count", "index"],
+        default=None,
+        help="Facet ordering: count (most frequent first) or index (alphabetical/chronological)",
+    )
+    ps.add_argument(
+        "--facet-prefix",
+        default=None,
+        help="Keep only facet values starting with this prefix, e.g. '81173_' on structHasAuthIdHal_fs",
+    )
+    ps.add_argument(
+        "--facet-pivot",
+        action="append",
+        default=[],
+        help="Comma-separated field chain for a pivot facet, e.g. 'title_s,docType_s,halId_s' (repeatable)",
+    )
 
     ps.add_argument("--group-field", default=None, help="Enable grouping by field")
     ps.add_argument("--group-limit", type=int, default=1)
@@ -189,6 +273,26 @@ def parse_args() -> argparse.Namespace:
         choices=["json", "xml", "xml-tei", "bibtex", "endnote", "rss", "atom", "csv"],
     )
     ps.add_argument("--indent", action="store_true")
+
+    pl = sub.add_parser("list-portals", help="List HAL portals (instances) from /ref/instance/")
+    pl.add_argument(
+        "--contains",
+        default=None,
+        help="Case-insensitive substring filter on the portal code or name",
+    )
+    pl.add_argument("--include-deprecated", action="store_true",
+                    help="Also return portals flagged deprecated (excluded by default)")
+    pl.add_argument("--rows", type=int, default=0, help="Truncate the list; 0 returns every match")
+
+    pr = sub.add_parser("lookup-ref", help="Query an AuréHAL reference endpoint (/ref/<ref>/)")
+    pr.add_argument("--ref", required=True, choices=list(REF_ENDPOINTS),
+                    help="Reference to query. Use list-portals for the instance reference.")
+    pr.add_argument("--q", default="*:*", help="Solr query string (q=)")
+    pr.add_argument("--fq", action="append", default=[], help="Solr filter query (repeatable)")
+    pr.add_argument("--fl", default="*", help="Fields list (comma-separated); '*' returns the whole entry")
+    pr.add_argument("--rows", type=int, default=15)
+    pr.add_argument("--start", type=int, default=0)
+    pr.add_argument("--sort", default=None)
 
     return p.parse_args()
 
@@ -215,12 +319,18 @@ def cmd_search(a: argparse.Namespace) -> Dict[str, Any]:
     if a.sort:
         params.append(("sort", a.sort))
 
-    if a.facet_field:
+    if a.facet_field or a.facet_pivot:
         params.append(("facet", "true"))
         for ff in a.facet_field:
             params.append(("facet.field", ff))
+        for fp in a.facet_pivot:
+            params.append(("facet.pivot", fp))
         params.append(("facet.mincount", str(a.facet_mincount)))
         params.append(("facet.limit", str(a.facet_limit)))
+        if a.facet_sort:
+            params.append(("facet.sort", a.facet_sort))
+        if a.facet_prefix:
+            params.append(("facet.prefix", a.facet_prefix))
 
     if a.group_field:
         params.append(("group", "true"))
@@ -247,9 +357,13 @@ def cmd_search(a: argparse.Namespace) -> Dict[str, Any]:
             "wt": a.wt,
             "fl": normalize_fl(a.fl),
             "facet_fields": a.facet_field,
+            "facet_pivot": a.facet_pivot,
             "group_field": a.group_field,
         },
-        "facets": {},
+        # One bucket list per requested facet field, always present — an empty
+        # array means "asked, no value matched", which is not the same thing as
+        # "not asked".
+        "facets": {ff: [] for ff in a.facet_field},
         "error": None,
     }
 
@@ -271,7 +385,12 @@ def cmd_search(a: argparse.Namespace) -> Dict[str, Any]:
         out["returned"] = len(docs)
         out["results"] = [normalize_doc(d) for d in docs]
         if "facet_counts" in obj:
-            out["facets"] = obj.get("facet_counts")
+            facet_counts = obj.get("facet_counts") or {}
+            out["facets"].update(normalize_facets(facet_counts))
+            out["facets_raw"] = facet_counts
+            pivots = facet_counts.get("facet_pivot")
+            if pivots:
+                out["facet_pivot"] = pivots
         if "grouped" in obj:
             out["grouped"] = obj.get("grouped")
         return out
@@ -281,11 +400,118 @@ def cmd_search(a: argparse.Namespace) -> Dict[str, Any]:
         return out
 
 
+def cmd_list_portals(a: argparse.Namespace) -> Dict[str, Any]:
+    """List HAL portals, i.e. the lowercase codes accepted by `--portal`.
+
+    `/ref/instance/` ignores q, fq and rows and always answers with the whole
+    list, so the filtering happens here rather than in the query string.
+    """
+    url = REF_BASE_URL + "instance/?wt=json"
+
+    out: Dict[str, Any] = {
+        "total_found": None,
+        "returned": 0,
+        "results": [],
+        "query_used": a.contains,
+        "params": {
+            "contains": a.contains,
+            "include_deprecated": a.include_deprecated,
+            "rows": a.rows,
+        },
+        "error": None,
+    }
+
+    obj, err = http_get_json(url)
+    if err:
+        out["error"] = err
+        out["source_url"] = url
+        return out
+
+    try:
+        docs = (obj.get("response", {}) or {}).get("docs", []) or []
+        needle = a.contains.lower() if a.contains else None
+
+        kept: List[Dict[str, Any]] = []
+        for d in docs:
+            # `deprecated` comes back as the string "true"/"false", not a bool.
+            if not a.include_deprecated and str(d.get("deprecated", "")).lower() == "true":
+                continue
+            if needle:
+                haystack = f"{d.get('code', '')} {d.get('name', '')}".lower()
+                if needle not in haystack:
+                    continue
+            kept.append(normalize_ref_doc("instance", d))
+
+        out["total_found"] = len(kept)
+        if a.rows and a.rows > 0:
+            kept = kept[: a.rows]
+        out["returned"] = len(kept)
+        out["results"] = kept
+        return out
+    except Exception as e:
+        out["error"] = f"Failed to parse HAL instance list: {e}"
+        out["source_url"] = url
+        return out
+
+
+def cmd_lookup_ref(a: argparse.Namespace) -> Dict[str, Any]:
+    """Query an AuréHAL reference (structures, authors, journals, projects…).
+
+    This is how a collection code, a `structId_i`, a journal id or an ANR
+    reference is resolved before it is used as a filter in `search`.
+    """
+    params: List[Tuple[str, str]] = [("q", a.q)]
+    for f in a.fq:
+        params.append(("fq", f))
+    params.append(("fl", a.fl))
+    params.append(("rows", str(a.rows)))
+    params.append(("start", str(a.start)))
+    if a.sort:
+        params.append(("sort", a.sort))
+    params.append(("wt", "json"))
+
+    url = REF_BASE_URL + f"{a.ref}/?" + urllib.parse.urlencode(params, doseq=True)
+
+    out: Dict[str, Any] = {
+        "total_found": None,
+        "returned": 0,
+        "results": [],
+        "query_used": a.q,
+        "filters_used": a.fq,
+        "ref": a.ref,
+        "params": {"rows": a.rows, "start": a.start, "sort": a.sort, "fl": a.fl},
+        "error": None,
+    }
+
+    obj, err = http_get_json(url)
+    if err:
+        out["error"] = err
+        out["source_url"] = url
+        return out
+
+    try:
+        resp = obj.get("response", {}) or {}
+        docs = resp.get("docs", []) or []
+        num_found = resp.get("numFound")
+        out["total_found"] = int(num_found) if num_found is not None else None
+        out["returned"] = len(docs)
+        out["results"] = [normalize_ref_doc(a.ref, d) for d in docs]
+        return out
+    except Exception as e:
+        out["error"] = f"Failed to parse HAL reference JSON response: {e}"
+        out["source_url"] = url
+        return out
+
+
 def main() -> None:
     a = parse_args()
 
     if a.cmd == "search":
         out = cmd_search(a)
+    elif a.cmd == "list-portals":
+        out = cmd_list_portals(a)
+    elif a.cmd == "lookup-ref":
+        out = cmd_lookup_ref(a)
     else:
         out = {"error": f"Unknown command: {a.cmd}"}
 

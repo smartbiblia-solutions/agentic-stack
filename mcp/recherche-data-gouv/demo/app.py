@@ -3,14 +3,6 @@
 Standalone Gradio demo of the Recherche Data Gouv MCP server, deployable as a
 Hugging Face Space.
 
-This app imports nothing from the parent folder: the Space root is this folder,
-so `mcp_server.py` does not exist there. It re-implements two of the server's
-tools — `search` and `metrics` — against the same Dataverse API, under the same
-names, with the same argument names and the same response shape.
-
-The canonical MCP endpoint remains `../mcp_server.py`. These tools are a
-hand-kept copy: change one, change the other.
-
 Local run:
     uv run --with 'gradio[mcp]>=6,<7' --with httpx app.py
 
@@ -254,10 +246,7 @@ with gr.Blocks(title="Recherche Data Gouv MCP demo") as demo:
         "# Recherche Data Gouv MCP demo\n"
         "Démo autonome du serveur MCP "
         "[`recherche-data-gouv`](https://github.com/smartbiblia-solutions/agentic-stack/tree/main/mcp/recherche-data-gouv) "
-        "— l'entrepôt Dataverse de la recherche française. Le point d'entrée MCP "
-        "canonique reste `mcp_server.py` dans ce dossier ; cet espace ré-implémente "
-        "deux de ses outils et les réexpose sur `/gradio_api/mcp/sse` pour les "
-        "clients qui ne peuvent pas l'exécuter."
+        ", l'entrepôt Dataverse de la recherche française."
     )
 
     with gr.Tab("Recherche"):
@@ -274,7 +263,7 @@ with gr.Blocks(title="Recherche Data Gouv MCP demo") as demo:
         gr.Examples(
             examples=[
                 ["biodiversité", "dataset", 5],
-                ["qzxwvsansresultat", "dataset", 5],
+                ["qzxwvsansresultat", "dataset", 0],
             ],
             inputs=[q, entity_type, per_page],
             label="Une requête qui trouve, une qui ne trouve rien",

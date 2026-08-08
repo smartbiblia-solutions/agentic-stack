@@ -3,14 +3,6 @@
 Standalone Gradio demo of the IdRef resolver MCP server, deployable as
 a Hugging Face Space.
 
-This app imports nothing from the parent folder: the Space root is this folder,
-so `mcp_server.py` does not exist there. It re-implements the server's single
-tool — `align_person` — against the same `POST /align/person` endpoint, under the
-same name, with the same argument names and the same response shape.
-
-The canonical MCP endpoint remains `../mcp_server.py`. The tool is a hand-kept
-copy: change one, change the other.
-
 Like the server, this app is a transport adapter: every score, threshold and
 status comes from the API, and no host but the API is called. Unlike the server,
 a missing or unreachable API does not stop the process — the call comes back with
@@ -247,13 +239,8 @@ with gr.Blocks(title="IdRef resolver MCP demo") as demo:
         "# IdRef resolver — démo MCP\n"
         "Démo autonome du serveur MCP "
         "[`idref-resolver-api`](https://github.com/smartbiblia-solutions/agentic-stack/tree/main/mcp/idref-resolver-api) "
-        "— aligner une personne citée dans un document sur son PPN IdRef, ou "
-        "s'abstenir quand l'indice est trop faible. Le point d'entrée MCP canonique "
-        "reste `mcp_server.py` dans ce dossier ; cet espace ré-implémente son outil "
-        "et le réexpose sur `/gradio_api/mcp/sse`.\n\n"
-        "Donnez tout le contexte dont vous disposez : un nom seul sépare rarement "
-        "deux homonymes. Un alignement déclenche jusqu'à 41 requêtes ABES — comptez "
-        "plusieurs dizaines de secondes."
+        ", aligner une autoritéé personne extraite d'un document sur son PPN IdRef, ou "
+        "s'abstenir quand l'indice est trop faible. "
     )
 
     with gr.Row():

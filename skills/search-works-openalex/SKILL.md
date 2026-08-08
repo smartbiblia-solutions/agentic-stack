@@ -4,13 +4,14 @@ description: >
   Search and retrieve academic papers from OpenAlex, the world's largest open
   bibliographic database. Use this skill whenever the user wants to find
   research papers, resolve DOIs, look up citation counts, find works that cite
-  a paper, or classify text by academic topic. Trigger on keywords like
-  "papers on", "find research", "look up DOI", "who cites", "academic
-  literature", "scientific articles", "cited by", "classify this abstract", or
-  any request involving bibliographic data. Use it even if the user doesn't
-  explicitly name OpenAlex — if they want to find or analyse academic papers,
-  this skill applies.
-version: "0.2.0"
+  a paper, classify text by academic topic, or find papers by meaning rather
+  than by keyword. Trigger on keywords like "papers on", "find research",
+  "look up DOI", "who cites", "academic literature", "scientific articles",
+  "cited by", "classify this abstract", "papers similar to", "semantic search",
+  "find work like this abstract", or any request involving bibliographic data.
+  Use it even if the user doesn't explicitly name OpenAlex — if they want to
+  find or analyse academic papers, this skill applies.
+version: "0.3.0"
 author: smartbiblia
 maturity: stable
 preferred_output: json
@@ -29,6 +30,8 @@ selection:
     - The user wants to resolve a DOI or find full bibliographic metadata.
     - The task requires finding papers that cite a specific work.
     - The task is to classify a title or abstract by academic topic.
+    - The user describes a subject in prose, or has an abstract in hand, and no
+      single keyword captures it — search by meaning instead.
   avoid_when:
     - The task concerns a library catalog or institutional holdings.
     - Papers have already been retrieved and the next step is appraisal or synthesis.
@@ -51,7 +54,7 @@ tags:
 ## Purpose
 
 `scripts/cli.py` is a self-contained CLI (runs with `uv run`) that wraps the
-[OpenAlex REST API](https://docs.openalex.org). It exposes four subcommands and
+[OpenAlex REST API](https://docs.openalex.org). It exposes five subcommands and
 emits **strict JSON on stdout**, making it easy to pipe into further processing.
 
 ```
@@ -61,11 +64,12 @@ uv run scripts/cli.py <subcommand> [flags]
 > **Path note**: adjust the path to `cli.py` to wherever it lives in
 > your project (e.g. `skills/search-works-openalex/scripts/cli.py`).
 
-This skill exposes four logical operations, each addressable independently:
+This skill exposes five logical operations, each addressable independently:
 
 | Logical skill | Subcommand | Purpose |
 |---|---|---|
 | `search-works-openalex` | `search` | Keyword search across the OpenAlex corpus |
+| `search-works-openalex` | `search-semantic` | Meaning-based search from a descriptive text |
 | `lookup-dois-openalex` | `batch-lookup-by-doi` | Resolve one or more DOIs to full metadata |
 | `get-citing-works-openalex` | `get-citing-works` | Find papers citing a specific work |
 | `classify-text-openalex` | `classify-text` | Classify a title or abstract by academic topic |
@@ -121,7 +125,58 @@ zero results — check spelling or try the ORCID/ROR identifier directly.
 
 ---
 
-### 2. `batch-lookup-by-doi` — resolve one or more DOIs
+### 2. `search-semantic` — search by meaning, not by keyword
+
+Rank the corpus by semantic proximity to a piece of descriptive text. Use it
+when the subject is easier to *describe* than to name: the query is embedded and
+compared to work embeddings, so a paper matches even when it shares none of the
+words used to ask for it. Feed it a sentence or an abstract, not two keywords —
+the model was built for abstract-length input.
+
+```bash
+uv run ./skills/search-works-openalex/scripts/cli.py search-semantic \
+  --text "Methods for automatically assigning subject headings to library
+          catalogue records using neural language models" \
+  --max-results 20 \
+  --year-from 2020 \
+  --oa
+```
+
+| Flag | Type | Default | Notes |
+|---|---|---|---|
+| `--text` | string | **required** | Descriptive text, min 20 chars, **truncated at 2000** |
+| `--file` | path | — | Text file to read from; used if `--text` is absent |
+| `--max-results` | int | `15` | **Max 50** — the endpoint refuses more |
+| `--year-from` | int | — | Inclusive lower bound on publication **year** |
+| `--year-to` | int | — | Inclusive upper bound on publication **year** |
+| `--oa` | flag | off | Return only open-access works |
+
+Each result carries an extra `relevance_score` (cosine similarity, higher is
+closer). The response adds `truncated` (whether the text exceeded 2000
+characters) and `cost_usd`, the price OpenAlex reports for the call.
+
+**Three constraints inherited from the endpoint**, and the reason this
+subcommand is not just a flag on `search`:
+
+- **`total_found` is always `null`.** OpenAlex reports `meta.count: 50` on every
+  semantic response — that is the result cap, not a corpus count. Reporting it
+  as a total would overstate what was searched.
+- **Years, not dates.** The endpoint rejects `from_publication_date` /
+  `to_publication_date`, which is what `search`'s `--date-from` / `--date-to`
+  send. Hence `--year-from` / `--year-to`, which map to `publication_year`.
+- **Only a closed set of filters is accepted** — `is_oa`, `publication_year`,
+  `type`, `language`, `has_abstract`, `has_fulltext`, `is_retracted`, author,
+  institution, funder, source and licence ids. Anything else (`cited_by_count`,
+  country code, a date range) returns HTTP 400. `--oa` and the year bounds are
+  the ones exposed here.
+
+Semantic search is also rate-limited to roughly **one request per second** and
+is slower than keyword search. Use `search` when a keyword genuinely names the
+subject; reach for `search-semantic` when it does not.
+
+---
+
+### 3. `batch-lookup-by-doi` — resolve one or more DOIs
 
 Fetch full metadata for known papers by DOI. Handles batches of up to 200 DOIs
 (internally chunked at 50 per request).
@@ -151,7 +206,7 @@ Both `--doi` and `--doi-file` can be combined. DOIs are auto-normalised to
 
 ---
 
-### 3. `get-citing-works` — find papers that cite a given work
+### 4. `get-citing-works` — find papers that cite a given work
 
 Retrieve works that cite a specific OpenAlex work, sorted by citation count
 (most-cited first).
@@ -172,7 +227,7 @@ the `openalex_id` field from its result.
 
 ---
 
-### 4. `classify-text` — classify a piece of text by academic topic
+### 5. `classify-text` — classify a piece of text by academic topic
 
 Submit a title or abstract and get back topics and keywords as classified by
 OpenAlex's `/text` endpoint.
@@ -246,6 +301,25 @@ this common schema:
 }
 ```
 
+`search-semantic` returns the same records with three additions — a per-record
+`relevance_score`, and `truncated` / `cost_usd` at the top level — and
+`total_found` pinned to `null`:
+
+```jsonc
+{
+  "total_found": null,          // the endpoint reports a cap, never a count
+  "returned": 3,
+  "results": [
+    { "source": "openalex", "id": "W4387313225", "…": "…", "relevance_score": 0.9746 }
+  ],
+  "query_used": "Methods for automatically assigning subject headings…",
+  "filters_used": ["publication_year:>2019", "is_oa:true"],
+  "truncated": false,
+  "cost_usd": 0.001,
+  "error": null
+}
+```
+
 `classify-text` returns a different shape:
 
 ```jsonc
@@ -279,7 +353,8 @@ the `error` key in the output.
 
 ```
 generate-search-queries          ← build the query set first
-  → search-works-openalex        ← this skill
+  → search                       ← this skill, when a keyword names the subject
+  → search-semantic              ← this skill, when only a description does
   → search-records-hal           ← run in parallel for French deposits
   → search-records-sudoc         ← run in parallel for library holdings
       ↓
@@ -291,6 +366,11 @@ generate-search-queries          ← build the query set first
 `classify-text` is a side branch: use it to place a research question in the
 OpenAlex topic hierarchy before searching, and feed the returned topic names
 back into `--query`.
+
+`search` and `search-semantic` are complementary, not alternatives: run both on
+the same question and merge on `doi`. The keyword pass finds what the vocabulary
+names; the semantic pass finds what it misses. Their records share the same
+schema, so deduplication needs no special handling.
 
 ---
 
@@ -315,6 +395,25 @@ not environment variables.
 uv run ./skills/search-works-openalex/scripts/cli.py search \
   --query "large language model alignment" \
   --date-from 2023-01-01 --oa --max-results 20
+```
+
+**Find papers on a subject no keyword names cleanly:**
+```bash
+uv run ./skills/search-works-openalex/scripts/cli.py search-semantic \
+  --text "Using citation context to decide whether a retracted paper is being
+          cited approvingly or as an example of misconduct" \
+  --max-results 25 --year-from 2018
+```
+
+**Find work close to a paper you already have** — feed its abstract back in:
+```bash
+uv run ./skills/search-works-openalex/scripts/cli.py batch-lookup-by-doi \
+  --doi 10.1038/s41586-021-03819-2 \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['abstract'])" \
+  > abstract.txt
+
+uv run ./skills/search-works-openalex/scripts/cli.py search-semantic \
+  --file abstract.txt --max-results 20
 ```
 
 **Resolve a DOI and then find what cites it:**
@@ -351,3 +450,5 @@ uv run ./skills/search-works-openalex/scripts/cli.py search \
 - **Exit code always 0**: the CLI does not raise non-zero on API errors — always inspect the `error` field in the JSON output.
 - **Rate limiting**: handled automatically via retry with exponential backoff. If persistent, set `OPENALEX_API_KEY`.
 - **Abstract unavailable**: the `abstract` field is `null` for some works — OpenAlex does not guarantee abstract coverage.
+- **`search-semantic` returns at most 50 records and no total**: `total_found` is `null` by design. There is no paging past the cap — narrow with `--year-from` / `--year-to` / `--oa`, or rephrase the text, instead of asking for more.
+- **`search-semantic` is rate-limited to roughly one call per second**: back-to-back calls return 429. Retries handle it, but a loop of semantic queries should be paced rather than parallelised.

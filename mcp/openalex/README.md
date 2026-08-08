@@ -1,7 +1,7 @@
 # OpenAlex MCP Server
 
 An [MCP](https://modelcontextprotocol.io) server that gives AI agents access to
-**[OpenAlex](https://openalex.org)** — the world's largest open bibliographic
+**[OpenAlex](https://openalex.org)**, the world's largest open bibliographic
 database (~250 million scholarly works). It wraps the
 [OpenAlex REST API](https://docs.openalex.org/api-entities/works).
 
@@ -10,9 +10,19 @@ database (~250 million scholarly works). It wraps the
 | Tool | Purpose |
 |---|---|
 | `search_works` | Keyword search with filters on date, open access, author (name or ORCID), and institution (name or ROR URL). Authors and institutions are resolved automatically. |
+| `search_semantic` | Meaning-based search: ranks works by semantic proximity to a descriptive text or an abstract, so a paper matches without sharing the words used to ask for it. |
 | `lookup_by_doi` | Resolve one or more DOIs to full OpenAlex records. Batched at 50 per request. |
 | `get_citing_works` | Fetch works that cite a given OpenAlex work, sorted by citation count. |
 | `classify_text` | Classify a title or abstract into academic topics and keywords. |
+
+`search_semantic` wraps OpenAlex's vector search, and inherits three limits from
+that endpoint: at most 50 results with no paging past them, `total_found` always
+`null` (OpenAlex reports the result cap there, not a corpus count), and date
+bounds given as years — `year_from` / `year_to`, because the
+`from_publication_date` / `to_publication_date` that `search_works` accepts are
+rejected. It also allows roughly one call per second. Reach for it when no
+keyword names the subject cleanly; run it alongside `search_works` and merge on
+`doi` when recall matters.
 
 The server is a single self-contained file, `mcp_server.py`, with inline
 [PEP 723](https://peps.python.org/pep-0723/) dependencies (`fastmcp`, `httpx`)
@@ -287,37 +297,11 @@ curl -i http://localhost:8011/sse    # sse
 ## Browser demo / Hugging Face Space
 
 [`demo/`](demo/) holds a **standalone** Gradio app that re-implements
-`search_works` and `classify_text` against the same OpenAlex endpoints and wraps
-them in a browser UI. It imports nothing from this folder: `demo/` is the Space
-root, so `mcp_server.py` does not exist there. The two tools are a hand-kept
-copy — same names, same arguments, same response shape. Change one, change the
-other.
+`search_works`, `search_semantic` and `classify_text` against the same OpenAlex
+endpoints and wraps
+them in a browser UI. 
 
-```bash
-cd demo
-uv run --with 'gradio[mcp]>=6,<7' --with httpx app.py
-# http://localhost:7860
-```
-
-Launched with `mcp_server=True`, it also serves those two tools at
-`/gradio_api/mcp/sse`. That endpoint is **demo-grade and secondary** — the
-canonical MCP endpoint is `mcp_server.py`, with the full tool set and no
-tightened result limits. Set `GRADIO_MCP_SERVER=false` wherever the real server
-is already reachable, so clients cannot bind to the wrong one.
-
-Check what it exposes:
-
-```bash
-curl -s localhost:7860/gradio_api/mcp/schema | python3 -m json.tool
-```
-
-`demo/` is a deployable Space as it stands — `demo/README.md` carries the YAML
-configuration block, and `demo/requirements.txt` is what the Space installs:
-
-```bash
-git remote add space https://huggingface.co/spaces/<owner>/<space-name>
-git subtree push --prefix=mcp/openalex/demo space main
-```
+See this [README file](./demo/README.md)
 
 ---
 

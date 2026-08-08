@@ -7,7 +7,7 @@ sdk: gradio
 sdk_version: 6.22.0
 app_file: app.py
 pinned: false
-short_description: Align a person to an IdRef PPN through the idref-resolver-api MCP tool.
+short_description: Align a person to an IdRef PPN through the idref-resolver-api service.
 ---
 
 # IdRef Resolver MCP demo
@@ -26,7 +26,7 @@ cannot bind to the wrong one.
 
 ## It is standalone
 
-`app.py` imports nothing from the parent folder — this folder is the Space root,
+`app.py` imports nothing from the parent folder, this folder is the Space root,
 so `mcp_server.py` does not exist here. The tool is a **hand-kept copy** of the
 canonical one: same name, same argument names and types, same response shape
 including `error`. **Change one, change the other.**
@@ -72,4 +72,18 @@ starts and every call returns an `error` — a Space must degrade, not crash.
 ```bash
 git remote add space https://huggingface.co/spaces/<owner>/<space-name>
 git subtree push --prefix=mcp/idref-resolver-api/demo space main
+```
+
+## Add this MCP to clients that support Streamable HTTP
+
+Add the following configuration to your MCP config
+
+```
+{
+  "mcpServers": {
+    "primo": {
+      "url": "http://localhost:7860/gradio_api/mcp/"
+    }
+  }
+}
 ```

@@ -2,16 +2,6 @@
 """
 Standalone Gradio demo of the sudoc-sru MCP server, deployable as a Hugging Face Space.
 
-This app imports nothing from the parent folder: the Space root is this folder,
-so `mcp_server.py` does not exist there. It re-implements two of the server's
-tools — `search_sudoc` and `lookup_by_ppn` — against the same Abes SRU service,
-under the same names, with the same argument names and the same record shape.
-
-The canonical MCP endpoint remains `../mcp_server.py`, which also carries
-`lookup_by_isbn`, `count_records` and `scan_index`, the full index reference and
-no tightened result limit. These two tools are a hand-kept copy: change one,
-change the other.
-
 Local run:
     uv run --with 'gradio[mcp]>=6,<7' --with httpx app.py
 
@@ -384,10 +374,7 @@ with gr.Blocks(title="Sudoc MCP demo") as demo:
     gr.Markdown(
         "# Sudoc MCP demo\n"
         "Standalone demo of the [`sudoc-sru`](https://github.com/smartbiblia-solutions/agentic-stack/tree/main/mcp/sudoc-sru) "
-        "MCP server — the French union catalogue over SRU/UNIMARC. The canonical "
-        "MCP endpoint is `mcp_server.py` in that folder; this Space re-implements "
-        "two of its tools and re-exposes them at `/gradio_api/mcp/sse` for "
-        "clients that cannot run it."
+        "MCP server, the French union catalogue over SRU/UNIMARC."
     )
 
     with gr.Tab("Recherche"):

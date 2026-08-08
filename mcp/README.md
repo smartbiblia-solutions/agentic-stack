@@ -1,6 +1,6 @@
 # MCP servers
 
-Five [MCP](https://modelcontextprotocol.io) servers that give AI agents direct
+Six [MCP](https://modelcontextprotocol.io) servers that give AI agents direct
 access to scholarly and bibliographic sources. Each one is a single
 self-contained `mcp_server.py` with inline
 [PEP 723](https://peps.python.org/pep-0723/) dependencies, runnable by
@@ -12,6 +12,7 @@ as a Hugging Face Space.
 |---|---|---|---|
 | [`openalex`](./openalex/) | 8011 | recommended | ~250M scholarly works: keyword search, DOI resolution, citing works, topic classification |
 | [`sudoc-sru`](./sudoc-sru/) | 8012 | no | French union catalogue (SRU/UNIMARC): search, PPN and ISBN lookup, record counts, index scan |
+| [`hal`](./hal/) | 8016 | no | HAL, the French national open repository (Solr): scoped search over collections and portals, facets, AuréHAL referentials |
 | [`primo`](./primo/) | 8013 | **yes** | An institutional Primo (Ex Libris) discovery layer: catalogue search and record retrieval |
 | [`recherche-data-gouv`](./recherche-data-gouv/) | 8014 | no | French national research data repository (Dataverse): dataset search, usage metrics, metadata blocks |
 | [`idref-resolver-api`](./idref-resolver-api/) | 8015 | **yes** | Person-to-IdRef-PPN alignment from free-text clues, with an explicit abstention when the evidence is too weak |
@@ -20,6 +21,31 @@ Each server has its own README with client-by-client setup (Claude Code, Claude
 Desktop, Cursor/VS Code), a zero-install stdio recipe, the full flag reference
 and troubleshooting.
 
+Some demo MCP servers are deployed as HuggingFace spaces
+
+| Server | HF space | Demo MCP Server URL (Streamable HTTP) |
+|---|---|---|---|
+| [`openalex`](./openalex/) | 8011 | recommended |
+| [`sudoc-sru`](./sudoc-sru/) | [`Geraldine/sudoc-sru-mcp`](https://huggingface.co/spaces/Geraldine/sudoc-sru-mcp) | `https://geraldine-sudoc-sru-mcp.hf.space/gradio_api/mcp/` |
+| [`primo`](./primo/) | [`Geraldine/exlibris-primo-mcp`](https://huggingface.co/spaces/Geraldine/exlibris-primo-mcp) | `https://geraldine-exlibris-primo-mcp.hf.space/gradio_api/mcp/` |
+| [`recherche-data-gouv`](./recherche-data-gouv/) | [`Geraldine/recherche-data-gouv-mcp`](https://huggingface.co/spaces/Geraldine/recherche-data-gouv-mcp) | `https://geraldine-recherche-data-gouv-mcp.hf.space/gradio_api/mcp/` |
+
+>**Important tip related to demo MCP deployment in Claude Desktop**: Claude Desktop does not natively support direct HTTP/URL-based fields
+ (expects local stdio processes using command and args, "http" type or url key are not allowed). 
+  To connect Claude Desktop to a streamable HTTP server or a remote url, you must wrap the url using a standard stdio command via npx mcp-remote in your configuration file.
+  ```json
+	  {
+	  "mcpServers": {
+		"my-remote-server": {
+		  "command": "npx",
+		  "args": [
+			"mcp-remote",
+			"http://127.0.0.1:8080/mcp"
+		  ]
+		}
+	  }
+	}
+  ```
 ---
 
 ## Tools at a glance
@@ -29,6 +55,8 @@ and troubleshooting.
 
 **`sudoc-sru`** — `search_sudoc`, `lookup_by_ppn`, `lookup_by_isbn`,
 `count_records`, `scan_index`
+
+**`hal`** — `search_hal`, `list_portals`, `lookup_reference`
 
 **`primo`** — `search_catalog`, `get_record`
 
@@ -61,7 +89,7 @@ cp mcp/.env.example mcp/.env    # fill in OPENALEX_API_KEY, the PRIMO_* and IDRE
 docker compose -f mcp/compose.yml up --build
 ```
 
-Endpoints: `http://localhost:{8011,8012,8013,8014,8015}/mcp`.
+Endpoints: `http://localhost:{8011,8012,8013,8014,8015,8016}/mcp`.
 
 ### In a browser
 
@@ -145,6 +173,7 @@ connection:
 |---|---|
 | `openalex` | [`search-works-openalex`](../skills/search-works-openalex/SKILL.md) |
 | `sudoc-sru` | [`search-records-sudoc`](../skills/search-records-sudoc/SKILL.md) |
+| `hal` | [`search-records-hal`](../skills/search-records-hal/SKILL.md) |
 | `idref-resolver-api` | [`resolve-persons-idref`](../skills/resolve-persons-idref/SKILL.md) |
 
 ---

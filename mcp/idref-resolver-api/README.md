@@ -1,15 +1,12 @@
 # IdRef Resolver MCP Server
 
 An [MCP](https://modelcontextprotocol.io) server that gives AI agents access to
-the **idref-resolver-api** service: given a person named in a document plus
-whatever context is available, it returns the matching **IdRef PPN** — the French
-national authority identifier for persons — or abstains when the evidence is too
+a deployed **idref-resolver-api** API service: given a person named in a document plus
+whatever context is available, it returns the matching **IdRef PPN** (the French
+national authority identifier for persons) or abstains when the evidence is too
 weak.
 
-The service scores every candidate authority using the Qualinka `find-ra-idref`
-and `attrra` services and the IdRef linked references. This server computes
-nothing: it is a transport adapter over `POST /align/person`, and it calls no
-host but that API.
+See the [`idref-resolver-api repo`](https://github.com/smartbiblia-solutions/idref-resolver-api) for self-hosted deployment of the API.
 
 ## Tools
 

@@ -28,6 +28,20 @@ services:
       - "8012:8012"
     restart: unless-stopped
     
+  mcp-hal:
+    build:
+      context: ./hal
+      dockerfile: Dockerfile
+    container_name: mcp-hal
+    environment:
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8016"
+      MCP_TRANSPORT: http
+      MCP_STATELESS: ${MCP_STATELESS:-false}
+    ports:
+      - "8016:8016"
+    restart: unless-stopped
+
   mcp-primo:
     build:
       context: ./primo

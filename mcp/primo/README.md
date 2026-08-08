@@ -1,9 +1,8 @@
 # Primo MCP Server
 
 An [MCP](https://modelcontextprotocol.io) server that gives AI agents access to
-an **Ex Libris / Clarivate Primo (or Primo VE)** discovery layer — the
-library-catalog + discovery-index front-end for institutions running the Alma
-ILS. It wraps the public [`primoSearch` REST API](https://developers.exlibrisgroup.com/primo/apis/).
+an **Ex Libris / Clarivate Primo (or Primo VE)** discovery layer (library-catalog + discovery-index front-end for institutions running a Primo instance.
+It wraps the public [`primoSearch` REST API](https://developers.exlibrisgroup.com/primo/apis/).
 
 ## Tools
 
@@ -318,41 +317,9 @@ curl -i http://localhost:8013/sse    # sse
 
 [`demo/`](demo/) holds a **standalone** Gradio app that re-implements
 `search_catalog` and `get_record` against the same upstream and wraps them in a browser
-UI. It imports nothing from this folder: `demo/` is the Space root, so
-`mcp_server.py` does not exist there. Those tools are a hand-kept copy — same
-names, same arguments, same response shape. Change one, change the other.
+UI. 
 
-```bash
-cd demo
-uv run --with 'gradio[mcp]>=6,<7' --with httpx app.py
-# http://localhost:7860
-```
-
-Launched with `mcp_server=True`, it also serves two of its tools at
-`/gradio_api/mcp/sse`. That endpoint is **demo-grade and secondary** — the
-canonical MCP endpoint is `mcp_server.py`, with the full tool set and no
-tightened result limits. Set `GRADIO_MCP_SERVER=false` wherever the real server
-is already reachable, so clients cannot bind to the wrong one.
-
-Check what it exposes:
-
-```bash
-curl -s localhost:7860/gradio_api/mcp/schema | python3 -m json.tool
-```
-
-`demo/` is a deployable Space as it stands — `demo/README.md` carries the YAML
-configuration block, and `demo/requirements.txt` is what the Space installs:
-
-```bash
-git remote add space https://huggingface.co/spaces/<owner>/<space-name>
-git subtree push --prefix=mcp/primo/demo space main
-```
-
-> **Deploy this one private, or with a key issued for it alone.** Primo is an
-> institutional subscription: every visitor's click spends the institution's API
-> quota. Put `PRIMO_API_KEY`, `PRIMO_VID`, `PRIMO_TAB` and `PRIMO_SCOPE` in the
-> Space settings — never in this repository. Without them the Space starts and
-> answers every call with an `error` telling the operator what is missing.
+See this [README file](./demo/README.md)
 
 ---
 

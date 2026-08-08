@@ -117,6 +117,25 @@ SELECT_FIELDS = ",".join([
     "referenced_works_count", "cited_by_api_url",
 ])
 
+# Bounds specific to `search.semantic`, verified against the API:
+#   - `per-page` above 50 answers HTTP 400;
+#   - `meta.count` is always 50 — the cap of the vector ranking, not a corpus
+#     count, which is why `total_found` comes back null;
+#   - text beyond 2000 characters is truncated before embedding.
+SEMANTIC_MAX_RESULTS = 50
+SEMANTIC_MAX_CHARS = 2000
+
+# `search.semantic` refuses to be combined with `search`, and accepts only a
+# closed filter list which the API enumerates in its own 400 message:
+#   author.id, authorships.author.id, authorships.institutions.id, funders.id,
+#   has_abstract, has_fulltext, institution.id, institutions.id, is_oa,
+#   is_retracted, language, open_access.is_oa, primary_location.license,
+#   primary_location.source.id, publication_year, type
+# `from_publication_date` / `to_publication_date` are absent from it — the date
+# bounds `search_works` takes are rejected here, so this tool bounds by
+# `publication_year` and names its arguments `year_from` / `year_to` to make the
+# difference visible in the schema a model reads.
+
 
 # ── HTTP client with retry / backoff ──────────────────────────────────────────
 
@@ -356,7 +375,7 @@ def _envelope(
 
 mcp = FastMCP(
     name="openalex",
-    instructions="OpenAlex connector — search academic publications, resolve DOIs, fetch citations, classify text.",
+    instructions="OpenAlex connector — search academic publications by keyword or by meaning, resolve DOIs, fetch citations, classify text.",
 )
 
 
@@ -449,6 +468,103 @@ async def search_works(
     )
     if trace:
         out["trace"] = trace_events
+    return out
+
+
+def _semantic_year_filter(year_from: int | None, year_to: int | None) -> str | None:
+    """Year bound as a `publication_year` filter. OpenAlex's `>` and `<` are
+    exclusive, hence the one-year offset."""
+    if year_from and year_to:
+        return f"publication_year:{year_from}-{year_to}"
+    if year_from:
+        return f"publication_year:>{year_from - 1}"
+    if year_to:
+        return f"publication_year:<{year_to + 1}"
+    return None
+
+
+@mcp.tool
+async def search_semantic(
+    text: str,
+    max_results: int = 15,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    filter_open_access: bool = False,
+) -> dict:
+    """
+    Search OpenAlex by meaning rather than by keyword.
+
+    Ranks works by semantic proximity to a descriptive text, so a paper matches
+    even when it shares none of the words used to ask for it. Give it a sentence
+    or a whole abstract — it is built for abstract-length input, not for two
+    keywords. Use search_works instead when a keyword genuinely names the subject.
+
+    Three limits come from the endpoint itself: at most 50 results with no paging
+    past them, `total_found` always null (OpenAlex reports the cap, not a count),
+    and date bounds expressed as years — the from/to dates search_works accepts
+    are rejected here. Roughly one call per second is allowed.
+
+    Args:
+        text: Descriptive text or abstract, minimum 20 characters, truncated at 2000.
+        max_results: Number of works to return (max 50).
+        year_from: Earliest publication year, inclusive.
+        year_to: Latest publication year, inclusive.
+        filter_open_access: If true, return only open-access works.
+
+    Returns:
+        {"source": "openalex", "command": "search_semantic", "total_found": null,
+         "returned": int, "results": [work with "relevance_score", ...],
+         "error": str | null, "query_used": str, "filters_used": [str],
+         "truncated": bool, "cost_usd": float | null}
+    """
+    trace = TRACE_DEFAULT
+    text = (text or "").strip()
+    filters: list[str] = []
+
+    if len(text) < 20:
+        return _envelope("search_semantic", total_found=None,
+                         error="Text too short (minimum 20 characters)",
+                         query_used=text, filters_used=filters,
+                         truncated=False, cost_usd=None)
+
+    year_filter = _semantic_year_filter(year_from, year_to)
+    if year_filter:
+        filters.append(year_filter)
+    if filter_open_access:
+        filters.append("is_oa:true")
+
+    params: dict[str, Any] = {
+        "search.semantic": text[:SEMANTIC_MAX_CHARS],
+        "per-page": max(1, min(max_results, SEMANTIC_MAX_RESULTS)),
+        "select": SELECT_FIELDS + ",relevance_score",
+    }
+    if filters:
+        params["filter"] = ",".join(filters)
+
+    try:
+        data, t = await _get(OPENALEX_WORKS, params, trace=trace)
+    except (RuntimeError, httpx.HTTPError) as e:
+        return _envelope("search_semantic", total_found=None, error=str(e),
+                         query_used=text[:SEMANTIC_MAX_CHARS], filters_used=filters,
+                         truncated=len(text) > SEMANTIC_MAX_CHARS, cost_usd=None)
+
+    results = []
+    for work in data.get("results", []):
+        record = _format_work(work)
+        record["relevance_score"] = work.get("relevance_score")
+        results.append(record)
+
+    out = _envelope(
+        "search_semantic",
+        results,
+        total_found=None,
+        query_used=text[:SEMANTIC_MAX_CHARS],
+        filters_used=filters,
+        truncated=len(text) > SEMANTIC_MAX_CHARS,
+        cost_usd=data.get("meta", {}).get("cost_usd"),
+    )
+    if trace:
+        out["trace"] = t
     return out
 
 

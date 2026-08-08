@@ -284,35 +284,9 @@ curl -i http://localhost:8012/sse    # sse
 
 [`demo/`](demo/) holds a **standalone** Gradio app that re-implements
 `search_sudoc` and `lookup_by_ppn` against the same upstream and wraps them in a browser
-UI. It imports nothing from this folder: `demo/` is the Space root, so
-`mcp_server.py` does not exist there. Those tools are a hand-kept copy — same
-names, same arguments, same response shape. Change one, change the other.
+UI. 
 
-```bash
-cd demo
-uv run --with 'gradio[mcp]>=6,<7' --with httpx app.py
-# http://localhost:7860
-```
-
-Launched with `mcp_server=True`, it also serves two of its tools at
-`/gradio_api/mcp/sse`. That endpoint is **demo-grade and secondary** — the
-canonical MCP endpoint is `mcp_server.py`, with the full tool set and no
-tightened result limits. Set `GRADIO_MCP_SERVER=false` wherever the real server
-is already reachable, so clients cannot bind to the wrong one.
-
-Check what it exposes:
-
-```bash
-curl -s localhost:7860/gradio_api/mcp/schema | python3 -m json.tool
-```
-
-`demo/` is a deployable Space as it stands — `demo/README.md` carries the YAML
-configuration block, and `demo/requirements.txt` is what the Space installs:
-
-```bash
-git remote add space https://huggingface.co/spaces/<owner>/<space-name>
-git subtree push --prefix=mcp/sudoc-sru/demo space main
-```
+See this [README file](./demo/README.md)
 
 ---
 

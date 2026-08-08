@@ -8,9 +8,9 @@
 Connecteur OpenAlex — CLI autonome.
 Base mondiale de publications académiques : https://docs.openalex.org
 
-Quatre sous-commandes : search, batch-lookup-by-doi, get-citing-works,
-classify-text. Sortie : JSON strict sur stdout, code de sortie toujours 0 —
-les erreurs remontent dans le champ `error`.
+Cinq sous-commandes : search, search-semantic, batch-lookup-by-doi,
+get-citing-works, classify-text. Sortie : JSON strict sur stdout, code de sortie
+toujours 0 — les erreurs remontent dans le champ `error`.
 
 Variable d'environnement :
   OPENALEX_API_KEY   (optionnel — « polite pool », limites de taux plus hautes)
@@ -60,6 +60,25 @@ SELECT_FIELDS = ",".join([
     "cited_by_count", "type", "topics", "keywords",
     "referenced_works_count", "cited_by_api_url",
 ])
+
+# Bornes propres à `search.semantic`, vérifiées contre l'API :
+#   - `per-page` au-delà de 50 renvoie HTTP 400 ;
+#   - `meta.count` vaut toujours 50, c'est le plafond de la recherche
+#     vectorielle et non un décompte du corpus — d'où `total_found: null` ;
+#   - au-delà de 2000 caractères le texte est tronqué avant plongement.
+SEMANTIC_MAX_RESULTS = 50
+SEMANTIC_MAX_CHARS = 2000
+
+# `search.semantic` refuse d'être combiné à `search` et n'accepte qu'une liste
+# fermée de filtres, que l'API énumère elle-même dans son message d'erreur 400 :
+#   author.id, authorships.author.id, authorships.institutions.id, funders.id,
+#   has_abstract, has_fulltext, institution.id, institutions.id, is_oa,
+#   is_retracted, language, open_access.is_oa, primary_location.license,
+#   primary_location.source.id, publication_year, type
+# `from_publication_date` / `to_publication_date` en sont absents : le bornage
+# temporel de cette sous-commande passe donc par `publication_year`, ce qui est
+# aussi pourquoi ses options s'appellent --year-from / --year-to et non
+# --date-from / --date-to comme celles de `search`.
 
 
 # ── Client HTTP ───────────────────────────────────────────────────────────────
@@ -261,6 +280,71 @@ def search(
     }
 
 
+def _semantic_year_filter(year_from: int | None, year_to: int | None) -> str | None:
+    """Borne temporelle exprimée en `publication_year` (les bornes `>` et `<`
+    d'OpenAlex sont strictes, d'où le décalage d'un an)."""
+    if year_from and year_to:
+        return f"publication_year:{year_from}-{year_to}"
+    if year_from:
+        return f"publication_year:>{year_from - 1}"
+    if year_to:
+        return f"publication_year:<{year_to + 1}"
+    return None
+
+
+def search_semantic(
+    text: str,
+    max_results: int = 15,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    filter_open_access: bool = False,
+) -> dict:
+    """Recherche vectorielle : classe le corpus par proximité de sens avec un
+    texte descriptif, sans dépendre des mots exacts qu'il emploie."""
+    text = (text or "").strip()
+    if len(text) < 20:
+        return {"total_found": None, "returned": 0, "results": [],
+                "error": "Texte trop court (minimum 20 caractères)",
+                "query_used": text, "filters_used": []}
+
+    filters = []
+    year_filter = _semantic_year_filter(year_from, year_to)
+    if year_filter:
+        filters.append(year_filter)
+    if filter_open_access:
+        filters.append("is_oa:true")
+
+    params: dict[str, Any] = {
+        "search.semantic": text[:SEMANTIC_MAX_CHARS],
+        "per-page": max(1, min(max_results, SEMANTIC_MAX_RESULTS)),
+        "select": SELECT_FIELDS + ",relevance_score",
+    }
+    if filters:
+        params["filter"] = ",".join(filters)
+
+    data = get_json(OPENALEX_WORKS, params)
+    results = data.get("results", [])
+    formatted = []
+    for work in results:
+        record = _format_result(work)
+        record["relevance_score"] = work.get("relevance_score")
+        formatted.append(record)
+
+    return {
+        # `meta.count` renvoie toujours 50 : c'est le plafond du classement
+        # vectoriel, pas un nombre de correspondances. Le déclarer serait mentir
+        # sur la taille du gisement, d'où `null`.
+        "total_found": None,
+        "returned": len(formatted),
+        "results": formatted,
+        "query_used": text[:SEMANTIC_MAX_CHARS],
+        "filters_used": filters,
+        "truncated": len(text) > SEMANTIC_MAX_CHARS,
+        "cost_usd": data.get("meta", {}).get("cost_usd"),
+        "error": None,
+    }
+
+
 def batch_lookup_by_doi(dois: list[str]) -> dict:
     """Résout une liste de DOI en notices normalisées (lots de 50)."""
     if not dois:
@@ -355,6 +439,21 @@ def main() -> int:
     ap_s.add_argument("--author", default=None)
     ap_s.add_argument("--institution", default=None)
 
+    ap_sem = sub.add_parser(
+        "search-semantic",
+        help="Recherche vectorielle : par le sens d'un texte, pas par mots-clés",
+    )
+    ap_sem.add_argument("--text", default=None,
+                        help=f"Description ou résumé (min. 20 car., tronqué à {SEMANTIC_MAX_CHARS})")
+    ap_sem.add_argument("--file", default=None, help="Fichier texte ; utilisé si --text est absent")
+    ap_sem.add_argument("--max-results", type=int, default=15,
+                        help=f"Max {SEMANTIC_MAX_RESULTS}")
+    ap_sem.add_argument("--year-from", type=int, default=None,
+                        help="Année de publication minimale (incluse)")
+    ap_sem.add_argument("--year-to", type=int, default=None,
+                        help="Année de publication maximale (incluse)")
+    ap_sem.add_argument("--oa", action="store_true")
+
     ap_b = sub.add_parser("batch-lookup-by-doi", help="Résout un ou plusieurs DOI")
     ap_b.add_argument("--doi", action="append", default=[], help="Répétable")
     ap_b.add_argument("--doi-file", default=None, help="Fichier texte, un DOI par ligne")
@@ -380,6 +479,19 @@ def main() -> int:
                 sort_by=args.sort_by,
                 author=args.author,
                 institution=args.institution,
+            ))
+
+        if args.cmd == "search-semantic":
+            text = (args.text or "").strip()
+            if not text and args.file:
+                with open(args.file, "r", encoding="utf-8") as f:
+                    text = f.read().strip()
+            return _print(search_semantic(
+                text=text,
+                max_results=args.max_results,
+                year_from=args.year_from,
+                year_to=args.year_to,
+                filter_open_access=args.oa,
             ))
 
         if args.cmd == "batch-lookup-by-doi":

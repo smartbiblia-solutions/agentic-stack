@@ -25,7 +25,7 @@ cannot bind to the wrong one.
 
 ## It is standalone
 
-`app.py` imports nothing from the parent folder — this folder is the Space root,
+`app.py` imports nothing from the parent folder, this folder is the Space root,
 so `mcp_server.py` does not exist here. The two tools are a **hand-kept copy** of
 the canonical ones: same names, same argument names and types, same response
 shape including `error`. **Change one, change the other.**
@@ -58,4 +58,32 @@ Read access is public — no credential.
 ```bash
 git remote add space https://huggingface.co/spaces/<owner>/<space-name>
 git subtree push --prefix=mcp/recherche-data-gouv/demo space main
+```
+
+## Add this MCP to clients that support Streamable HTTP
+
+Add the following configuration to your MCP config
+
+```
+{
+  "mcpServers": {
+    "primo": {
+      "url": "http://localhost:7860/gradio_api/mcp/"
+    }
+  }
+}
+```
+
+## Gradio live MCP demo
+
+[https://huggingface.co/spaces/Geraldine/recherche-data-gouv-mcp](https://huggingface.co/spaces/Geraldine/recherche-data-gouv-mcp)
+
+```
+{
+  "mcpServers": {
+    "primo": {
+      "url": "https://geraldine-recherche-data-gouv-mcp.hf.space/gradio_api/mcp/"
+    }
+  }
+}
 ```

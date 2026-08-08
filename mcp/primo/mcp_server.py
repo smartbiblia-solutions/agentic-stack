@@ -164,6 +164,9 @@ Q_FIELDS = ("any", "title", "creator", "sub", "usertag")
 Q_PRECISIONS = ("contains", "exact", "begins_with")
 SORT_OPTIONS = ("rank", "title", "author", "date", "date_d", "date_a")
 
+# Bounds a creation year has to fall inside to count as a bound at all.
+YEAR_MIN, YEAR_MAX = 1000, 2999
+
 
 # ── HTTP client with retry / backoff ──────────────────────────────────────────
 
@@ -276,6 +279,23 @@ def _build_q(query: str, field: str, precision: str) -> str:
 def _build_qinclude(facets: list[tuple[str, str]]) -> str | None:
     clauses = [f"{cat},exact,{val}" for cat, val in facets if cat and val]
     return "|,|".join(clauses) if clauses else None
+
+
+def _year_bound(value: Any) -> int | None:
+    """
+    A creation-year bound, or None when there is none.
+
+    A caller that means "no bound" may send `0` rather than omitting the
+    argument. Taken literally that builds
+    `facet_searchcreationdate,exact,[0 TO 0]`, which Primo applies as written:
+    zero records, HTTP 200, no error to read. Anything outside a plausible year
+    means "no bound".
+    """
+    try:
+        year = int(value)
+    except (TypeError, ValueError):
+        return None
+    return year if YEAR_MIN <= year <= YEAR_MAX else None
 
 
 # ── PNX parsing helpers ───────────────────────────────────────────────────────
@@ -507,9 +527,10 @@ async def search_catalog(
         inc.append(("facet_domain", collection))
     if availability:
         inc.append(("facet_tlevel", availability))
-    if year_from is not None or year_to is not None:
-        start = str(year_from) if year_from is not None else "*"
-        end = str(year_to) if year_to is not None else "*"
+    start_year, end_year = _year_bound(year_from), _year_bound(year_to)
+    if start_year is not None or end_year is not None:
+        start = str(start_year) if start_year is not None else "*"
+        end = str(end_year) if end_year is not None else "*"
         inc.append(("facet_searchcreationdate", f"[{start} TO {end}]"))
 
     params: dict[str, Any] = {

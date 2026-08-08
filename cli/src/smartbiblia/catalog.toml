@@ -39,14 +39,14 @@ tags = ["catalog", "french", "unimarc", "abes", "sudoc"]
 
 [skills.hal]
 name = "search-records-hal"
-description = "Recherche dans HAL, dépôt ouvert français (articles, thèses, rapports)"
+description = "Recherche dans HAL, dépôt ouvert français (articles, thèses, rapports), portails et référentiels AuréHAL"
 path = "skills/search-records-hal"
 maturity = "stable"
 tags = ["repository", "french", "open-access", "hal"]
 
 [skills.openalex]
 name = "search-works-openalex"
-description = "Recherche dans OpenAlex, la plus grande base bibliographique mondiale en accès ouvert"
+description = "Recherche par mots-clés ou par le sens dans OpenAlex, la plus grande base bibliographique mondiale en accès ouvert"
 path = "skills/search-works-openalex"
 maturity = "stable"
 tags = ["global", "open-access", "openalex", "doi"]
@@ -88,7 +88,7 @@ tags = ["dmp", "fair", "open-science", "research"]
 
 [mcp.openalex]
 name = "openalex"
-description = "Serveur MCP OpenAlex : recherche d'œuvres, résolution de DOI, citations, classification par topic"
+description = "Serveur MCP OpenAlex : recherche d'œuvres par mots-clés ou par le sens, résolution de DOI, citations, classification par topic"
 path = "mcp/openalex"
 entrypoint = "mcp_server.py"
 maturity = "stable"
@@ -107,6 +107,17 @@ port = 8012
 env = []
 env_required = []
 tags = ["catalog", "french", "unimarc", "abes", "sudoc"]
+
+[mcp.hal]
+name = "hal"
+description = "Serveur MCP HAL : recherche Solr dans l'archive ouverte nationale française (collections, portails, facettes) et résolution des référentiels AuréHAL"
+path = "mcp/hal"
+entrypoint = "mcp_server.py"
+maturity = "stable"
+port = 8016
+env = []
+env_required = []
+tags = ["repository", "french", "open-access", "hal", "ccsd"]
 
 [mcp.primo]
 name = "primo"
