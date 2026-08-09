@@ -21,7 +21,7 @@ Environment (all optional — they are only the fallback layer):
     PRIMO_TAB            tab name
     PRIMO_REGION         gateway region: na eu ap ca cn (default na)
     PRIMO_BASE_URL       full gateway base URL, overrides PRIMO_REGION
-    PRIMO_INST           institution code (on-premise Primo only)
+    PRIMO_INST           institution code
     PRIMO_LANG           UI language (default en)
     GRADIO_SERVER_NAME   bind address (default 0.0.0.0)
     GRADIO_SERVER_PORT   port (default 7860)
@@ -720,8 +720,9 @@ with gr.Blocks(title="Primo MCP demo") as demo:
             scope_in = gr.Textbox(label="Scope", value=ENV_SCOPE, placeholder="MyInst_and_CI")
         with gr.Row():
             inst_in = gr.Textbox(
-                label="Institution code (on-premise only)", value=ENV_INST,
-                info="Leave empty on hosted Primo — sending it there returns 0 records and no error.",
+                label="Institution code (inst)", value=ENV_INST,
+                placeholder="MyUni",
+                info="The institution code configured in the Primo Back Office.",
             )
             lang_in = gr.Textbox(label="Interface language", value=ENV_LANG, placeholder="en")
 

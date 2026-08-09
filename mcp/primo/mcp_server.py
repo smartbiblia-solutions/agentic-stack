@@ -13,29 +13,30 @@ agents through the public `primoSearch` REST API
 Documentation: https://developers.exlibrisgroup.com/primo/apis/
 
 Primo APIs are institution-scoped: one API key is bound to a single
-institution + environment, and every search must name the view (vid), tab and
-scope configured in that institution's Primo Back Office. These are supplied as
-server defaults (CLI flags / env) and may be overridden per tool call; the API
-key itself comes from PRIMO_API_KEY only.
+institution + environment, and every search must name the view (vid), tab,
+scope and institution code (inst) configured in that institution's Primo Back
+Office. These are supplied as server defaults (CLI flags / env) and may be
+overridden per tool call; the API key itself comes from PRIMO_API_KEY only.
 
 Three ways to run:
 
   # 1. Zero-install — run directly from GitHub (uv fetches everything)
   uv run https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/main/mcp/primo/mcp_server.py \
-      --vid INST:VIEW --tab TAB --scope SCOPE --region eu --transport stdio
+      --vid INST:VIEW --tab TAB --scope SCOPE --inst INST \
+      --region eu --transport stdio
 
   # 2. Local stdio — client launches the process (recommended for desktop/IDE apps)
   uv run /path/to/mcp/primo/mcp_server.py \
-      --vid INST:VIEW --tab TAB --scope SCOPE --transport stdio
+      --vid INST:VIEW --tab TAB --scope SCOPE --inst INST --transport stdio
 
   # 3. Local HTTP — run once, connect multiple clients by URL
   uv run /path/to/mcp/primo/mcp_server.py \
-      --vid INST:VIEW --tab TAB --scope SCOPE \
+      --vid INST:VIEW --tab TAB --scope SCOPE --inst INST \
       --host 0.0.0.0 --port 8013 --transport http
 
   # 4. Stateless HTTP — no session affinity, for load-balanced / multi-replica deploys
   uv run /path/to/mcp/primo/mcp_server.py \
-      --vid INST:VIEW --tab TAB --scope SCOPE \
+      --vid INST:VIEW --tab TAB --scope SCOPE --inst INST \
       --transport http --stateless
 
 Environment:
@@ -49,7 +50,7 @@ Options:
     --vid           TEXT    Default view id (e.g. INST:VIEW)     [recommended]
     --tab           TEXT    Default tab name                     [recommended]
     --scope         TEXT    Default scope name                   [recommended]
-    --inst          TEXT    Institution code (on-premise Primo only)
+    --inst          TEXT    Default institution code             [recommended]
     --lang          TEXT    Default UI language                  [default: en]
     --host          TEXT    Bind host                            [default: 0.0.0.0]
     --port          INT     Bind port                            [default: 8013]
@@ -97,7 +98,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--scope",          default=os.environ.get("PRIMO_SCOPE"),
                    help="Default scope name")
     p.add_argument("--inst",           default=os.environ.get("PRIMO_INST"),
-                   help="Institution code (on-premise Primo only)")
+                   help="Default institution code")
     p.add_argument("--lang",           default=os.environ.get("PRIMO_LANG", "en"),
                    help="Default UI language")
     p.add_argument("--host",           default=os.environ.get("MCP_HOST", "0.0.0.0"))
@@ -437,18 +438,21 @@ def _parse_facets(raw_facets: Any) -> list[dict]:
     return out
 
 
-def _resolve_target(vid: str | None, scope: str | None, tab: str | None) -> tuple[str, str, str | None]:
-    """Resolve view/scope/tab from per-call args falling back to server defaults."""
+def _resolve_target(
+    vid: str | None, scope: str | None, tab: str | None, inst: str | None = None,
+) -> tuple[str, str, str | None, str | None]:
+    """Resolve view/scope/tab/inst from per-call args falling back to server defaults."""
     v = vid or DEFAULT_VID
     s = scope or DEFAULT_SCOPE
     t = tab or DEFAULT_TAB
+    i = inst or DEFAULT_INST
     missing = [n for n, val in (("vid", v), ("scope", s)) if not val]
     if missing:
         raise RuntimeError(
             f"Missing {', '.join(missing)}. Set them as server defaults "
-            f"(--vid/--scope/--tab) or pass them to the tool."
+            f"(--vid/--scope/--tab/--inst) or pass them to the tool."
         )
-    return v, s, t
+    return v, s, t, i
 
 
 # ── MCP server ────────────────────────────────────────────────────────────────
@@ -458,7 +462,8 @@ mcp = FastMCP(
     instructions=(
         "Ex Libris / Clarivate Primo discovery connector — search an institution's "
         "library catalog and discovery index, and fetch full PNX records. "
-        "All queries run against one institution's configured view (vid/scope/tab)."
+        "All queries run against one institution's configured view "
+        "(vid/scope/tab/inst)."
     ),
 )
 
@@ -483,6 +488,7 @@ async def search_catalog(
     vid: str | None = None,
     tab: str | None = None,
     scope: str | None = None,
+    inst: str | None = None,
 ) -> dict:
     """
     Search an Ex Libris Primo discovery layer (library catalog + discovery index).
@@ -506,6 +512,7 @@ async def search_catalog(
         vid: Override the server's default view id (INST:VIEW).
         tab: Override the server's default tab.
         scope: Override the server's default scope.
+        inst: Override the server's default institution code.
 
     Returns:
         {"source": "primo", "command": "search_catalog", "total_found": int,
@@ -514,7 +521,7 @@ async def search_catalog(
         Plus "facets" when return_facets is true.
     """
     trace = TRACE_DEFAULT
-    v, s, t = _resolve_target(vid, scope, tab)
+    v, s, t, i = _resolve_target(vid, scope, tab, inst)
 
     inc: list[tuple[str, str]] = []
     if resource_type:
@@ -546,8 +553,8 @@ async def search_catalog(
     }
     if t:
         params["tab"] = t
-    if DEFAULT_INST:
-        params["inst"] = DEFAULT_INST
+    if i:
+        params["inst"] = i
     qinc = _build_qinclude(inc)
     if qinc:
         params["qInclude"] = qinc
@@ -582,6 +589,7 @@ async def get_record(
     context: str = "L",
     vid: str | None = None,
     scope: str | None = None,
+    inst: str | None = None,
 ) -> dict:
     """
     Fetch a single Primo PNX record by its recordid.
@@ -592,6 +600,7 @@ async def get_record(
                  Index (CDI) record.
         vid: Override the server's default view id (INST:VIEW).
         scope: Override the server's default scope.
+        inst: Override the server's default institution code.
 
     Returns:
         {"source": "primo", "command": "get_record", "total_found": int,
@@ -599,12 +608,12 @@ async def get_record(
         `results` holds at most one record; `error` explains an empty one.
     """
     trace = TRACE_DEFAULT
-    v, s, _ = _resolve_target(vid, scope, None)
+    v, s, _, i = _resolve_target(vid, scope, None, inst)
     context = (context or "L").upper()
 
     params: dict[str, Any] = {"vid": v, "scope": s, "lang": DEFAULT_LANG, "apikey": API_KEY}
-    if DEFAULT_INST:
-        params["inst"] = DEFAULT_INST
+    if i:
+        params["inst"] = i
 
     url = f"{BASE_URL}/primo/v1/pnxs/{context}/{record_id}"
     try:

@@ -89,7 +89,8 @@ All optional — they are only what a call falls back to.
 | `PRIMO_SCOPE` | Default search scope, e.g. `MyInst_and_CI` |
 | `PRIMO_REGION` | Gateway region: `na` `eu` `ap` `ca` `cn` (default `na`) |
 | `PRIMO_BASE_URL` | Full gateway base URL, overrides `PRIMO_REGION` |
-| `PRIMO_INST` / `PRIMO_LANG` | Institution code (on-premise only) and interface language |
+| `PRIMO_INST` | Default institution code, e.g. `MyUni` |
+| `PRIMO_LANG` | Interface language (default `en`) |
 | `GRADIO_SERVER_NAME` / `GRADIO_SERVER_PORT` | Bind address and port |
 | `GRADIO_MCP_SERVER` | `false` disables the demo MCP endpoint |
 
