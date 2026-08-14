@@ -23,6 +23,20 @@ that [`uv`](https://docs.astral.sh/uv/) installs automatically on first run.
 
 ---
 
+## Example prompts
+
+Once the server is connected, these are the kinds of request it answers:
+
+- *"Find datasets about qualité de l'air, most recent first."* → `search`
+- *"Search only inside the dataverse of my institution, datasets only."* → `search` with `subtree` and a type filter
+- *"Which subjects and keywords dominate the results for 'biodiversité'?"* → `search`, reading the facets
+- *"Find the files named like a CSV codebook inside this dataset."* → `search` with the file type
+- *"How many datasets does the repository hold, and how many were published each month in 2024?"* → `metrics`
+- *"How many downloads, and how many unique downloads, over the past 30 days?"* → `metrics`
+- *"Which metadata blocks exist, and what fields does the citation block define?"* → `metadatablocks`
+
+---
+
 ## Prerequisites
 
 **`uv`** (handles Python + dependencies automatically):

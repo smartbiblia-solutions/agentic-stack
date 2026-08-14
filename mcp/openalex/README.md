@@ -30,6 +30,20 @@ that [`uv`](https://docs.astral.sh/uv/) installs automatically on first run.
 
 ---
 
+## Example prompts
+
+Once the server is connected, these are the kinds of request it answers:
+
+- *"Find open-access papers on graph neural networks for molecular property prediction published since 2022."* → `search_works`
+- *"List what Silvio Peroni (ORCID 0000-0003-0530-4305) published between 2020 and 2024."* → `search_works`, which resolves the author itself
+- *"Here is an abstract — find papers about the same idea, even if they use none of these words."* → `search_semantic`
+- *"Resolve these twelve DOIs and tell me which ones are open access."* → `lookup_by_doi`, batched at 50 per request
+- *"Who cites 10.1038/s41586-020-2649-2? Most-cited citing papers first."* → `get_citing_works`
+- *"What topics does this title and abstract belong to?"* → `classify_text`
+- *"Search both ways for 'urban heat island mitigation' and merge the results."* → `search_works` + `search_semantic`, deduplicated on `doi`
+
+---
+
 ## Prerequisites
 
 **`uv`** (handles Python + dependencies automatically):

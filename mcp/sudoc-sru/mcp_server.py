@@ -1120,9 +1120,14 @@ def scan_index(
     terms: list[dict] = []
     for term_el in root.findall(".//{http://www.loc.gov/zing/srw/}term"):
         value_el = term_el.find("{http://www.loc.gov/zing/srw/}value")
+        display_el = term_el.find("{http://www.loc.gov/zing/srw/}displayTerm")
         count_el = term_el.find("{http://www.loc.gov/zing/srw/}numberOfRecords")
+        # L'Abes laisse <srw:value> vide et place la forme indexée dans
+        # <srw:displayTerm> : lire les deux, sinon `term` est toujours null.
+        value = (value_el.text or "").strip() if value_el is not None else ""
+        display = (display_el.text or "").strip() if display_el is not None else ""
         terms.append({
-            "term":  (value_el.text or "").strip() if value_el is not None else None,
+            "term":  value or display or None,
             "count": int(count_el.text) if count_el is not None and count_el.text else None,
         })
 

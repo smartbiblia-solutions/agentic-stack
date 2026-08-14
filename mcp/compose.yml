@@ -79,6 +79,20 @@ services:
       - "8015:8015"
     restart: unless-stopped
 
+  mcp-theses-fr:
+    build:
+      context: ./theses-fr
+      dockerfile: Dockerfile
+    container_name: mcp-theses-fr
+    environment:
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8017"
+      MCP_TRANSPORT: http
+      MCP_STATELESS: ${MCP_STATELESS:-false}
+    ports:
+      - "8017:8017"
+    restart: unless-stopped
+
   mcp-recherche-data-gouv:
     build:
       context: ./recherche-data-gouv
@@ -92,4 +106,20 @@ services:
       MCP_STATELESS: ${MCP_STATELESS:-false}
     ports:
       - "8014:8014"
+    restart: unless-stopped
+
+  mcp-opencitations:
+    build:
+      context: ./opencitations
+      dockerfile: Dockerfile
+    container_name: mcp-opencitations
+    environment:
+      OPENCITATIONS_API_URL: ${OPENCITATIONS_API_URL:-https://api.opencitations.net}
+      OPENCITATIONS_API_KEY: ${OPENCITATIONS_API_KEY:-}
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8018"
+      MCP_TRANSPORT: http
+      MCP_STATELESS: ${MCP_STATELESS:-false}
+    ports:
+      - "8018:8018"
     restart: unless-stopped

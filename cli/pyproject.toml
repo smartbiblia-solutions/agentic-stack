@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "smartbiblia"
-version = "0.2.0"
+version = "0.3.0"
 description = "CLI to install smartbiblia agent skills and MCP servers into your agent workspace"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -36,6 +36,23 @@ that [`uv`](https://docs.astral.sh/uv/) installs automatically on first run.
 
 ---
 
+## Example prompts
+
+Once the server is connected, these are the kinds of request it answers:
+
+- *"Which HAL portal holds the theses?"* → `list_portals`
+- *"Find deposits on sobriété énergétique in the thesis portal, defended between 2020 and 2024."* → `list_portals` then `search_hal`
+- *"What is the HAL identifier of the CRIStAL laboratory, and what has it published since 2020?"* → `lookup_reference` then `search_hal` on `structId_i`
+- *"Give me a publication-year histogram for the FRANCE-GRILLES collection — counts only, no records."* → `search_hal` with `max_results=0` and a facet
+- *"Which HAL collections exist?"* → `search_hal` faceted on `collCodeName_fs`
+- *"List the articles produced by ANR project ANR-19-CE23-0001."* → `lookup_reference` (project) then `search_hal`
+- *"How many preprints did this laboratory deposit per year, with full text?"* → `search_hal` with filters and a pivot facet
+
+See [`## Usage patterns`](#usage-patterns) below for the exact calls behind
+several of these.
+
+---
+
 ## Prerequisites
 
 **`uv`** only — no API key, no registration:

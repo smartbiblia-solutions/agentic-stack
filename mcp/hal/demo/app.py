@@ -10,9 +10,10 @@ Environment:
     GRADIO_SERVER_PORT   port (default 7860)
     GRADIO_MCP_SERVER    "false" disables the demo MCP endpoint (default true)
 
-The three tools mirror the canonical `mcp_server.py` `search_hal` and `list_portals` are a
-hand-kept copy of the canonical tools — same names, same argument names and
-types, same response shape. Change one, change the other.
+`search_hal`, `list_portals` and `lookup_reference` are a hand-kept copy of the
+canonical `mcp_server.py` tools — same names, same argument names and types, same
+response shape. Change one, change the other. The only narrowing is `max_results`,
+capped at 25 instead of 100.
 """
 
 from __future__ import annotations
@@ -36,6 +37,18 @@ REQUEST_TIMEOUT = 20.0
 # public endpoint and every visitor's click is attributed to this Space's host.
 MAX_RESULTS = 25
 MAX_FACET_LIMIT = 200
+
+# AuréHAL references `lookup_reference` accepts. `instance` is deliberately
+# absent: it ignores q and rows and always returns the whole list of portals, so
+# `list_portals` filters it client-side instead.
+REF_ENDPOINTS = (
+    "structure",
+    "author",
+    "journal",
+    "anrproject",
+    "europeanproject",
+    "domain",
+)
 
 # One module-level pooled client for the process.
 HTTP = httpx.Client(
@@ -282,6 +295,56 @@ def _do_portals(contains: str | None,
     return out
 
 
+def _do_reference(
+    reference: str,
+    query: str,
+    filters: list[str] | None,
+    fields: str,
+    max_results: int,
+    start: int,
+    sort: str | None,
+    request_sink: dict | None = None,
+) -> dict:
+    filters = filters or []
+    out: dict = {"source": "hal", "command": "lookup_reference",
+                 "total_found": None, "returned": 0, "results": [],
+                 "reference": reference, "query_used": query,
+                 "filters_used": filters, "error": None}
+
+    if reference not in REF_ENDPOINTS:
+        out["error"] = (f"Unknown reference {reference!r}. Available: "
+                        f"{', '.join(REF_ENDPOINTS)}. Portals: use list_portals.")
+        return out
+
+    rows = max(0, min(int(max_results or 0), MAX_RESULTS))
+
+    params: list[tuple[str, str]] = [("q", query or "*:*")]
+    params += [("fq", f) for f in filters]
+    params += [("fl", fields or "*"), ("rows", str(rows)),
+               ("start", str(max(0, int(start or 0))))]
+    if sort:
+        params.append(("sort", sort))
+    params.append(("wt", "json"))
+
+    if request_sink is not None:
+        request_sink["reference"] = reference
+        request_sink["params"] = [list(p) for p in params]
+
+    url = REF_BASE_URL + f"{reference}/?" + urllib.parse.urlencode(params, doseq=True)
+    obj, error = _get_json(url, request_sink)
+    if error:
+        out["error"] = error
+        return out
+
+    resp = obj.get("response") or {}
+    docs = resp.get("docs") or []
+    num_found = resp.get("numFound")
+    out["total_found"] = int(num_found) if num_found is not None else None
+    out["results"] = [_format_ref_doc(reference, d) for d in docs]
+    out["returned"] = len(out["results"])
+    return out
+
+
 # ── MCP tools (hand-kept copies of the canonical ones) ────────────────────────
 
 def search_hal(
@@ -331,6 +394,57 @@ def list_portals(contains: str | None = None,
         {"source": "hal", "command": "list_portals", "total_found": int, "returned": int, "results": [{"source": "hal", "ref": "instance", "id": str | null, "label": str | null, "code": str | null, "url": str | null, "raw": {}}], "error": str | null}
     """
     return _do_portals(contains, include_deprecated, max_results)
+
+
+def lookup_reference(
+    reference: str,
+    query: str = "*:*",
+    filters: list[str] | None = None,
+    fields: str = "*",
+    max_results: int = 15,
+    start: int = 0,
+    sort: str | None = None,
+) -> dict:
+    """
+    Query an AuréHAL reference — the authority files behind HAL deposits.
+
+    This is how an ambiguous name becomes the identifier that filters a search: a
+    laboratory acronym becomes a `structId_i`, a journal title becomes a
+    `journalId_i`, an ANR acronym becomes an `anrProjectReference_s`. Resolve
+    first, then filter — a free-text affiliation search matches the string as
+    typed by each depositor, an identifier matches the entity.
+
+    Available references: structure (laboratories, institutions, teams),
+    author (author forms with their idHAL), journal (with ISSN and journal id),
+    anrproject, europeanproject, domain. Portals live in their own reference and
+    behave differently — use list_portals. Collections have no reference at all:
+    facet a search on `collCodeName_fs` to enumerate them.
+
+    Worked patterns:
+      reference="structure", query="acronym_t:CRIStAL", filters=["valid_s:VALID"]
+          → docid 410272, then search_hal(query="structId_i:410272")
+      reference="structure", query="parentDocid_i:300297"
+          → every sub-structure of an institution
+      reference="journal", query="title_t:scientometrics"
+          → journal id and ISSN
+
+    AuréHAL entries are *declarations*, not deduplicated truth: filter on
+    `valid_s:VALID` to skip forms flagged incorrect or merged, and expect several
+    entries for one real-world entity.
+
+    Args:
+        reference: One of structure, author, journal, anrproject, europeanproject, domain.
+        query: Solr query string. The searchable fields differ per reference — `acronym_t`, `text`, `name_t`, `parentDocid_i`, `structureId_i` are the common ones.
+        filters: Solr filter queries, e.g. ["valid_s:VALID"].
+        fields: Comma-separated fields to return; "*" returns the whole entry, which is usually what you want here because the useful field varies by reference.
+        max_results: Entries to return, 0-25 on this demo endpoint.
+        start: Offset for paging.
+        sort: Sort clause, e.g. "docid asc".
+
+    Returns:
+        {"source": "hal", "command": "lookup_reference", "total_found": int | null, "returned": int, "reference": str, "query_used": str, "filters_used": [str], "results": [{"source": "hal", "ref": str, "id": str | null, "label": str | null, "code": str | null, "acronym": str | null, "url": str | null, "raw": {}}], "error": str | null}
+    """
+    return _do_reference(reference, query, filters, fields, max_results, start, sort)
 
 
 # ── Presentation ──────────────────────────────────────────────────────────────
@@ -425,10 +539,54 @@ def _run_search(query, scope_kind, scope_code, max_results, doc_type, year_from,
     return _render_records(payload), payload, sent
 
 
+def _render_refs(payload: dict) -> str:
+    if payload.get("error"):
+        return (f"⚠️ **{payload['error']}**\n\n"
+                "_Open the debug panel below for the exact URL sent to HAL._")
+    results = payload.get("results") or []
+    if not results:
+        return "_Aucune entrée / no reference entry matched._"
+    lines = [
+        f"**{payload.get('returned', 0)} / {payload.get('total_found', '?')} entrées "
+        f"`{payload.get('reference')}`**",
+        "",
+        "| docid | Libellé | Acronyme | Site |",
+        "|---|---|---|---|",
+    ]
+    for r in results:
+        url = r.get("url")
+        lines.append(
+            "| `{docid}` | {label} | {acronym} | {site} |".format(
+                docid=r.get("id") or "—",
+                label=(r.get("label") or "—").replace("|", "\\|"),
+                acronym=(r.get("acronym") or r.get("code") or "—").replace("|", "\\|"),
+                site=f"[lien]({url})" if url else "—",
+            )
+        )
+    lines += ["", "_Le `docid` est la valeur à réutiliser comme filtre : "
+                  "`structId_i:<docid>`, `journalId_i:<docid>`…_"]
+    return "\n".join(lines)
+
+
 def _run_portals(contains, include_deprecated):
     sent: dict = {}
     payload = _do_portals(contains or None, bool(include_deprecated), 0, request_sink=sent)
     return _render_portals(payload), payload, sent
+
+
+def _run_reference(reference, query, valid_only, max_results):
+    sent: dict = {}
+    payload = _do_reference(
+        reference=reference,
+        query=(query or "").strip() or "*:*",
+        filters=["valid_s:VALID"] if valid_only else [],
+        fields="*",
+        max_results=int(max_results or 0),
+        start=0,
+        sort=None,
+        request_sink=sent,
+    )
+    return _render_refs(payload), payload, sent
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
@@ -489,11 +647,12 @@ with gr.Blocks(title="HAL MCP demo") as demo:
             examples=[
                 ["title_t:\"apprentissage profond\"", "portal", "tel", 10, "", None, None, ""],
                 ["*:*", "collection", "FRANCE-GRILLES", 0, "", None, None, "publicationDateY_i"],
-                ["title_s:japon", "", "", 10, "", None, None, ""],
+                ["text:sobriété énergétique", "", "", 10, "ART", 2020, 2024, ""],
             ],
             inputs=[query, scope_kind, scope_code, max_results, doc_type,
                     year_from, year_to, facet_field],
-            label="Une recherche qui trouve · un histogramme par année · une requête sur un champ non cherchable (0 résultat, sans erreur)",
+            label="Une thèse cherchée dans un portail · un histogramme par année "
+                  "sur une collection · un article filtré par type et par période",
         )
         search_btn.click(
             _run_search,
@@ -513,18 +672,63 @@ with gr.Blocks(title="HAL MCP demo") as demo:
             portals_req = gr.JSON()
 
         gr.Examples(
-            examples=[["thèses", False], ["univ-lille", False], ["these", False]],
+            examples=[["thèses", False], ["univ-lille", False], ["", True]],
             inputs=[contains, include_deprecated],
-            label="Accents compris : « thèses » trouve, « these » ne trouve rien",
+            label="Un filtre accentué (les accents ne sont pas repliés) · un code "
+                  "de portail · la liste complète, obsolètes compris",
         )
         portals_btn.click(
             _run_portals, inputs=[contains, include_deprecated],
             outputs=[portals_out, portals_raw, portals_req], api_name=False,
         )
 
+    with gr.Tab("Référentiels"):
+        gr.Markdown(
+            "Les référentiels AuréHAL : les fichiers d'autorité derrière les "
+            "dépôts. On y résout un acronyme de laboratoire, un titre de revue "
+            "ou un projet ANR en **docid**, que l'on réinjecte ensuite comme "
+            "filtre dans la recherche (`structId_i:410272`, "
+            "`journalId_i:18835`…).\n\n"
+            "Les entrées sont des *déclarations*, pas une vérité dédoublonnée : "
+            "cochez `valid_s:VALID` pour écarter les formes signalées "
+            "incorrectes ou fusionnées. Les portails ont leur propre onglet ; "
+            "les collections n'ont pas de référentiel du tout (facetter sur "
+            "`collCodeName_fs`)."
+        )
+        ref_kind = gr.Dropdown(list(REF_ENDPOINTS), value="structure",
+                               label="Référentiel")
+        ref_query = gr.Textbox(label="Requête Solr", value="*:*",
+                               placeholder="acronym_t:CRIStAL")
+        with gr.Row():
+            ref_valid = gr.Checkbox(label="Seulement les formes valides "
+                                          "(valid_s:VALID)", value=False)
+            ref_max = gr.Slider(0, MAX_RESULTS, value=15, step=1, label="Résultats")
+        ref_btn = gr.Button("Résoudre", variant="primary")
+        ref_out = gr.Markdown()
+        ref_raw = gr.JSON(label="Raw tool output")
+        with gr.Accordion("🔍 Debug — requête envoyée et réponse reçue / request sent and response received", open=False):
+            ref_req = gr.JSON()
+
+        gr.Examples(
+            examples=[
+                ["structure", "acronym_t:CRIStAL", True, 15],
+                ["journal", "title_t:scientometrics", False, 15],
+                ["anrproject", "text:numérique", False, 15],
+                ["domain", "*:*", False, 25],
+            ],
+            inputs=[ref_kind, ref_query, ref_valid, ref_max],
+            label="Un laboratoire par acronyme · une revue par titre · un projet "
+                  "ANR en texte libre · l'arbre des domaines",
+        )
+        ref_btn.click(
+            _run_reference, inputs=[ref_kind, ref_query, ref_valid, ref_max],
+            outputs=[ref_out, ref_raw, ref_req], api_name=False,
+        )
+
     # The only declared MCP tools. Names match the canonical server's.
     gr.api(search_hal, api_name="search_hal")
     gr.api(list_portals, api_name="list_portals")
+    gr.api(lookup_reference, api_name="lookup_reference")
 
 
 if __name__ == "__main__":

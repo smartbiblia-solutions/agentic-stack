@@ -26,6 +26,23 @@ that [`uv`](https://docs.astral.sh/uv/) installs automatically on first run.
 
 ---
 
+## Example prompts
+
+Once the server is connected, these are the kinds of request it answers:
+
+- *"Which IdRef PPN corresponds to the 'Marie Durand' who works on medieval history at Lyon 2?"* → `align_person`
+- *"Here is an author with the title of one of her books and her field — align her against IdRef."* → `align_person` with `works` and `field`
+- *"Align this list of twenty co-authors and tell me which ones you could not decide."* → one `align_person` call per name, keeping the `ambiguous` and `low_confidence` answers apart
+- *"You proposed a PPN — show me the evidence and the runners-up."* → the ranked `candidates` with their per-signal scores
+- *"Is this the same person as PPN 026927705, or a homonym?"* → `align_person`, then compare against `best_candidate`
+
+**Read the status before the identifier.** A `best_ppn` exists only when
+`status == "accepted"`; on `ambiguous`, `low_confidence` or `not_found` the
+service declined to decide, and `best_candidate.ppn` is a lead to check, not an
+answer.
+
+---
+
 ## Prerequisites
 
 **`uv`** (handles Python + dependencies automatically):

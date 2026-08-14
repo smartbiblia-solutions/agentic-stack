@@ -17,18 +17,19 @@ A standalone Gradio demo of the
 MCP server: search an institutional Primo (Ex Libris) discovery layer, or fetch
 one record by its identifier.
 
-The **canonical MCP endpoint is `mcp_server.py`** one folder up, with the full
-tool set and no tightened result limit. This app exposes `search_catalog` and
-`get_record` at `/gradio_api/mcp/sse`; that endpoint is demo-grade and
-secondary. Set `GRADIO_MCP_SERVER=false` wherever the real server is reachable,
-so clients cannot bind to the wrong one.
+The **canonical MCP endpoint is `mcp_server.py`** one folder up, with no
+tightened result limit. The server has exactly two tools, and this app exposes
+both — `search_catalog` and `get_record` — at `/gradio_api/mcp/`; that endpoint
+is demo-grade and secondary. Set `GRADIO_MCP_SERVER=false` wherever the real
+server is reachable, so clients cannot bind to the wrong one.
 
 ## It is standalone
 
 `app.py` imports nothing from the parent folder, this folder is the Space root,
 so `mcp_server.py` does not exist here. The two tools are a **hand-kept copy** of
-the canonical ones: same names, same argument names and types, same record shape
-including `error`. **Change one, change the other.**
+the canonical ones — the server has no third tool, so the surfaces match tool for
+tool: same names, same argument names and types, same record shape including
+`error`. **Change one, change the other.**
 
 Both tools carry the canonical signature in full — every facet argument, the
 paging `offset`, `full_text_only`, `return_facets` and the `vid` / `tab` /

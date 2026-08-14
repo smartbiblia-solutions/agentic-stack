@@ -3,6 +3,11 @@
 Standalone Gradio demo of the Recherche Data Gouv MCP server, deployable as a
 Hugging Face Space.
 
+The three tools mirror the canonical `mcp_server.py` — same names, same
+envelope. The deliberate narrowings are `per_page`, clamped to 10 instead of
+1000, and the argument lists, which keep the handful of parameters a browser
+form can express; everything else is passed through untouched.
+
 Local run:
     uv run --with 'gradio[mcp]>=6,<7' --with httpx app.py
 
@@ -175,6 +180,30 @@ def metrics(category: str = "downloads", breakdown: str | None = None) -> dict:
     return out
 
 
+def metadatablocks(block: str | None = None) -> dict:
+    """
+    List the Dataverse metadata blocks of Recherche Data Gouv, or retrieve one block schema.
+
+    Args:
+        block: Name of a single block — citation, geospatial, socialscience, biomedical, journal, astrophysics, semantics or computationalworkflow. Empty lists every block.
+
+    Returns:
+        {"source": "recherche-data-gouv", "command": "metadatablocks", "block": str | null, "data": object, "error": str | null}
+    """
+    out: dict = {
+        "source": "recherche-data-gouv", "command": "metadatablocks",
+        "block": block or None, "data": None, "error": None,
+    }
+
+    path = "metadatablocks" if not block else f"metadatablocks/{block.strip()}"
+    data, error = _get(path)
+    if error:
+        out["error"] = error
+        return out
+    out["data"] = data
+    return out
+
+
 # ── Presentation ──────────────────────────────────────────────────────────────
 
 
@@ -225,6 +254,58 @@ def _render_metrics(payload: dict) -> str:
     return f"**{label}** — voir la sortie brute ci-dessous."
 
 
+def _render_blocks(payload: dict) -> str:
+    data = payload.get("data")
+    inner = data.get("data") if isinstance(data, dict) else None
+
+    # The list endpoint answers with an array of blocks; one block answers with
+    # an object carrying its fields.
+    if isinstance(inner, list):
+        lines = [
+            f"**{len(inner)} blocs de métadonnées**",
+            "",
+            "| Nom | Intitulé | URI du vocabulaire |",
+            "|---|---|---|",
+        ]
+        for b in inner:
+            if not isinstance(b, dict):
+                continue
+            lines.append(
+                "| `{n}` | {d} | {u} |".format(
+                    n=b.get("name") or "—",
+                    d=b.get("displayName") or "—",
+                    u=b.get("blockURI") or "—",
+                )
+            )
+        lines += ["", "_Reprenez un `nom` dans le champ ci-dessus pour voir son schéma._"]
+        return "\n".join(lines)
+
+    if isinstance(inner, dict):
+        fields = inner.get("fields") or {}
+        lines = [
+            f"**{inner.get('displayName') or inner.get('name')}** — {len(fields)} champs",
+            "",
+            "| Champ | Intitulé | Type | Multiple |",
+            "|---|---|---|---|",
+        ]
+        for name, f in list(fields.items())[:40]:
+            if not isinstance(f, dict):
+                continue
+            lines.append(
+                "| `{n}` | {d} | {t} | {m} |".format(
+                    n=name,
+                    d=(f.get("displayName") or "—").replace("|", "\\|"),
+                    t=f.get("type") or "—",
+                    m="oui" if f.get("multiple") else "non",
+                )
+            )
+        if len(fields) > 40:
+            lines.append(f"| … | _{len(fields) - 40} champs de plus dans la sortie brute_ | | |")
+        return "\n".join(lines)
+
+    return "_Rien à afficher — voir la sortie brute ci-dessous._"
+
+
 def _run_search(q, entity_type, per_page):
     payload = search(q, entity_type or None, per_page)
     if payload.get("error"):
@@ -237,6 +318,13 @@ def _run_metrics(category, breakdown):
     if payload.get("error"):
         raise gr.Error(payload["error"])
     return _render_metrics(payload), payload
+
+
+def _run_blocks(block):
+    payload = metadatablocks((block or "").strip() or None)
+    if payload.get("error"):
+        raise gr.Error(payload["error"])
+    return _render_blocks(payload), payload
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
@@ -263,10 +351,13 @@ with gr.Blocks(title="Recherche Data Gouv MCP demo") as demo:
         gr.Examples(
             examples=[
                 ["biodiversité", "dataset", 5],
-                ["qzxwvsansresultat", "dataset", 0],
+                ['authorName:"Dupont"', "dataset", 5],
+                ["subject:Agricultural Sciences", "dataset", 5],
+                ["climat", "dataverse", 5],
+                ["csv", "file", 5],
             ],
             inputs=[q, entity_type, per_page],
-            label="Une requête qui trouve, une qui ne trouve rien",
+            label="Mots-clés, champ Solr, facette, puis les trois types d'entité",
         )
         search_btn.click(
             _run_search,
@@ -280,16 +371,24 @@ with gr.Blocks(title="Recherche Data Gouv MCP demo") as demo:
             list(METRIC_CATEGORIES), value="datasets", label="Compteur"
         )
         breakdown = gr.Dropdown(
-            [""] + list(METRIC_BREAKDOWNS), value="", label="Ventilation (optionnelle)"
+            [""] + list(METRIC_BREAKDOWNS),
+            value="",
+            label="Ventilation (optionnelle) — chacune n'existe que sur certains compteurs",
         )
         metrics_btn = gr.Button("Relever", variant="primary")
         metrics_out = gr.Markdown()
         metrics_raw = gr.JSON(label="Sortie brute de l'outil")
 
         gr.Examples(
-            examples=[["datasets", ""], ["datasets", "bySubject"]],
+            examples=[
+                ["downloads", ""],
+                ["datasets", "bySubject"],
+                ["datasets", "monthly"],
+                ["dataverses", "byCategory"],
+                ["files", "byType"],
+            ],
             inputs=[category, breakdown],
-            label="Un total, et une ventilation",
+            label="Un total, puis les quatre ventilations sur le compteur qui les porte",
         )
         metrics_btn.click(
             _run_metrics,
@@ -298,9 +397,30 @@ with gr.Blocks(title="Recherche Data Gouv MCP demo") as demo:
             api_name=False,
         )
 
+    with gr.Tab("Blocs de métadonnées"):
+        block = gr.Textbox(
+            label="Bloc (vide = la liste complète)", value="", placeholder="geospatial"
+        )
+        blocks_btn = gr.Button("Afficher", variant="primary")
+        blocks_out = gr.Markdown()
+        blocks_raw = gr.JSON(label="Sortie brute de l'outil")
+
+        gr.Examples(
+            examples=[[""], ["citation"], ["geospatial"]],
+            inputs=[block],
+            label="La liste, le bloc obligatoire, puis un bloc disciplinaire",
+        )
+        blocks_btn.click(
+            _run_blocks,
+            inputs=[block],
+            outputs=[blocks_out, blocks_raw],
+            api_name=False,
+        )
+
     # The only declared MCP tools. Names match the canonical server's.
     gr.api(search, api_name="search")
     gr.api(metrics, api_name="metrics")
+    gr.api(metadatablocks, api_name="metadatablocks")
 
 
 if __name__ == "__main__":

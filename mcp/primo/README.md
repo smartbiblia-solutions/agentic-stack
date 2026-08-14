@@ -17,6 +17,21 @@ that [`uv`](https://docs.astral.sh/uv/) installs automatically on first run.
 
 ---
 
+## Example prompts
+
+Once the server is connected — and pointed at your institution's view — these
+are the kinds of request it answers:
+
+- *"Search our catalogue for books on medieval manuscripts published since 2015."* → `search_catalog`
+- *"Same search, but only what is available online right now."* → `search_catalog` with the availability facet
+- *"Which resource types and languages come back for 'climate adaptation'? Give me the counts."* → `search_catalog`, reading the facets
+- *"Show me the next twenty results, sorted by date, newest first."* → `search_catalog` with paging and `sort`
+- *"Open the full record for recordid `alma991000...` — it's a local holding."* → `get_record` with `context="L"`
+- *"That last hit came from the Central Discovery Index; give me its full PNX record."* → `get_record` with `context="PC"`
+- *"Restrict the search to the law library's collection and tell me what we hold in print."* → `search_catalog` with library and collection facets
+
+---
+
 ## Prerequisites
 
 **`uv`** (handles Python + dependencies automatically):

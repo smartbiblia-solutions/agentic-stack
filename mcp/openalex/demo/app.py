@@ -2,8 +2,10 @@
 """
 Standalone Gradio demo of the OpenAlex MCP server, deployable as a Hugging Face Space.
 
-The three tools mirror the canonical `mcp_server.py` signatures argument for
-argument, author and institution resolution included.
+The five tools mirror the canonical `mcp_server.py` — same names, same arguments,
+same envelope, author and institution resolution included. The only deliberate
+narrowings are `max_results`, clamped to 10 instead of 200, and `dois`, capped at
+one batch: this endpoint is public and every call spends the operator's budget.
 
 The OpenAlex key setting is supplied **per request**, resolved in this order:
 
@@ -75,6 +77,10 @@ MAX_RESULTS = 10
 # rejects `from_publication_date` / `to_publication_date`, so this tool bounds by
 # `publication_year` and names its arguments `year_from` / `year_to`.
 SEMANTIC_MAX_CHARS = 2000
+
+# The canonical server batches DOIs at 50 per request and pages as many batches as
+# it is given. One batch is enough here, and the same clamp reason as MAX_RESULTS.
+MAX_DOIS = 25
 
 # One module-level pooled client for the process.
 HTTP = httpx.Client(timeout=REQUEST_TIMEOUT, follow_redirects=True)
@@ -299,6 +305,66 @@ def _search_semantic(
     return out
 
 
+def _lookup_by_doi(api_key: str | None, dois: list[str]) -> dict:
+    out: dict = {"source": "openalex", "command": "lookup_by_doi",
+                 "total_found": 0, "returned": 0, "results": [], "error": None}
+
+    cleaned = [d.strip() for d in (dois or []) if (d or "").strip()]
+    if not cleaned:
+        out["error"] = "dois is required"
+        return out
+    cleaned = cleaned[:MAX_DOIS]
+
+    normalized = [
+        d if d.startswith("https://doi.org/") else f"https://doi.org/{d}"
+        for d in cleaned
+    ]
+    params = {
+        "filter": "doi:" + "|".join(normalized),
+        "per-page": len(normalized),
+        "select": SELECT_FIELDS,
+    }
+    data, error = _get(OPENALEX_WORKS, params, api_key)
+    if error:
+        out["error"] = error
+        return out
+
+    results = data.get("results", [])
+    out["results"] = [_format_work(r) for r in results]
+    out["total_found"] = out["returned"] = len(results)
+    if not results:
+        out["error"] = f"No OpenAlex work matched the {len(cleaned)} DOI(s) given"
+    return out
+
+
+def _get_citing_works(api_key: str | None, openalex_id: str, max_results: int = 5) -> dict:
+    clean_id = (openalex_id or "").strip().replace("https://openalex.org/", "")
+    out: dict = {"source": "openalex", "command": "get_citing_works",
+                 "total_found": 0, "returned": 0, "results": [],
+                 "cited_work_id": clean_id, "error": None}
+
+    if not clean_id:
+        out["error"] = "openalex_id is required"
+        return out
+
+    params = {
+        "filter": f"cites:{clean_id}",
+        "per-page": max(1, min(int(max_results or 5), MAX_RESULTS)),
+        "sort": "cited_by_count:desc",
+        "select": SELECT_FIELDS,
+    }
+    data, error = _get(OPENALEX_WORKS, params, api_key)
+    if error:
+        out["error"] = error
+        return out
+
+    results = data.get("results", [])
+    out["total_found"] = (data.get("meta") or {}).get("count", 0)
+    out["returned"] = len(results)
+    out["results"] = [_format_work(r) for r in results]
+    return out
+
+
 def _classify_text(api_key: str | None, text: str) -> dict:
     out: dict = {"source": "openalex", "command": "classify_text",
                  "total_found": 0, "returned": 0, "results": [],
@@ -400,6 +466,53 @@ def search_semantic(
     """
     return _search_semantic(x_openalex_api_key, text, max_results, year_from,
                             year_to, filter_open_access)
+
+
+def lookup_by_doi(
+    dois: list[str],
+    x_openalex_api_key: Optional[gr.Header] = None,
+) -> dict:
+    """
+    Resolve one or more DOIs to full OpenAlex work records.
+
+    Use this when the DOI is already known — it is exact, unlike search_works,
+    and it answers for several DOIs in a single call. A DOI OpenAlex does not
+    index is simply absent from the results.
+
+    Calls run on the anonymous pool unless an X-Openalex-Api-Key request header is
+    sent, or the deployment configured a key of its own.
+
+    Args:
+        dois: DOIs in any format, short ("10.1038/nature12373") or full URL. Up to 25 per call on this demo endpoint.
+
+    Returns:
+        {"source": "openalex", "command": "lookup_by_doi", "total_found": int, "returned": int, "results": [{"source": "openalex", "id": str, "title": str, "authors": [str], "doi": str | null, "url": str, "year": int | null, "journal": str | null}], "error": str | null}
+    """
+    return _lookup_by_doi(x_openalex_api_key, dois)
+
+
+def get_citing_works(
+    openalex_id: str,
+    max_results: int = 5,
+    x_openalex_api_key: Optional[gr.Header] = None,
+) -> dict:
+    """
+    Fetch the works that cite a given OpenAlex work, most-cited first.
+
+    Forward citation lookup: who built on this paper. Resolve a DOI with
+    lookup_by_doi first if you only have one — this tool takes an OpenAlex id.
+
+    Calls run on the anonymous pool unless an X-Openalex-Api-Key request header is
+    sent, or the deployment configured a key of its own.
+
+    Args:
+        openalex_id: OpenAlex work id, short form ("W2741809807") or full URL.
+        max_results: Number of citing works to return, 1-10 on this demo endpoint.
+
+    Returns:
+        {"source": "openalex", "command": "get_citing_works", "total_found": int, "returned": int, "cited_work_id": str, "results": [{"source": "openalex", "id": str, "title": str, "authors": [str], "doi": str | null, "url": str, "year": int | null, "journal": str | null, "cited_by_count": int}], "error": str | null}
+    """
+    return _get_citing_works(x_openalex_api_key, openalex_id, max_results)
 
 
 def classify_text(
@@ -527,6 +640,20 @@ def _run_semantic(api_key, text, max_results, year_from, year_to, open_access):
     return _render_works(payload), payload
 
 
+def _run_lookup(api_key, dois_text):
+    payload = _lookup_by_doi(api_key, (dois_text or "").replace(",", "\n").splitlines())
+    if payload.get("error"):
+        raise gr.Error(payload["error"])
+    return _render_works(payload), payload
+
+
+def _run_citing(api_key, openalex_id, max_results):
+    payload = _get_citing_works(api_key, openalex_id, max_results)
+    if payload.get("error"):
+        raise gr.Error(payload["error"])
+    return _render_works(payload), payload
+
+
 def _run_classify(api_key, text: str):
     payload = _classify_text(api_key, text)
     if payload.get("error"):
@@ -586,11 +713,12 @@ with gr.Blocks(title="OpenAlex MCP demo") as demo:
 
         gr.Examples(
             examples=[
-                ["multilingual subject indexing", 5, False],
-                ["qzxwv nonexistent topic string", 3, False],
+                ["multilingual subject indexing", 5, False, "", ""],
+                ["knowledge graph", 5, True, "2022-01-01", ""],
+                ["deep learning", 5, False, "", "Yoshua Bengio"],
             ],
-            inputs=[query, max_results, open_access],
-            label="A hit, and a query that returns nothing",
+            inputs=[query, max_results, open_access, date_from, author],
+            label="Keywords alone, then narrowed by open access and date, then by author",
         )
         search_btn.click(
             _run_search,
@@ -625,17 +753,72 @@ with gr.Blocks(title="OpenAlex MCP demo") as demo:
         gr.Examples(
             examples=[
                 ["Deciding whether a citation to a retracted paper endorses it or "
-                 "flags it as an example of research misconduct", 5],
-                ["too short", 3],
+                 "flags it as an example of research misconduct", 5, None],
+                ["Assigning subject headings to library catalogue records "
+                 "automatically, with neural language models", 5, 2020],
             ],
-            inputs=[sem_text, sem_max],
-            label="A description the endpoint can embed, and an input it rejects",
+            inputs=[sem_text, sem_max, sem_year_from],
+            label="A description of a problem, then the same kind of query bounded by year",
         )
         sem_btn.click(
             _run_semantic,
             inputs=[api_key_in, sem_text, sem_max, sem_year_from, sem_year_to, sem_oa],
             outputs=[sem_out, sem_raw],
             api_name=False,
+        )
+
+    with gr.Tab("Lookup by DOI"):
+        gr.Markdown(
+            "Exact resolution rather than search: paste DOIs, one per line or "
+            f"comma-separated, up to {MAX_DOIS} per call. A DOI OpenAlex does not "
+            "index is simply missing from the table."
+        )
+        dois_in = gr.Textbox(
+            label="DOIs",
+            lines=4,
+            placeholder="10.1038/nature12373\n10.1371/journal.pone.0000308",
+        )
+        lookup_btn = gr.Button("Resolve", variant="primary")
+        lookup_out = gr.Markdown()
+        lookup_raw = gr.JSON(label="Raw tool output")
+
+        gr.Examples(
+            examples=[
+                ["10.1038/nature12373"],
+                ["10.1038/nature12373\n10.1371/journal.pone.0000308"],
+                ["https://doi.org/10.1371/journal.pone.0000308"],
+            ],
+            inputs=[dois_in],
+            label="One DOI, a batch of two, and a DOI given as a full URL",
+        )
+        lookup_btn.click(
+            _run_lookup, inputs=[api_key_in, dois_in],
+            outputs=[lookup_out, lookup_raw], api_name=False,
+        )
+
+    with gr.Tab("Citing works"):
+        gr.Markdown(
+            "Forward citations: the works that cite a given one, most-cited "
+            "first. Takes an OpenAlex id — resolve a DOI in the **Lookup by DOI** "
+            "tab first if that is all you have."
+        )
+        cited_id = gr.Textbox(label="OpenAlex work id", placeholder="W2741809807")
+        citing_max = gr.Slider(1, MAX_RESULTS, value=5, step=1, label="Results")
+        citing_btn = gr.Button("Find citing works", variant="primary")
+        citing_out = gr.Markdown()
+        citing_raw = gr.JSON(label="Raw tool output")
+
+        gr.Examples(
+            examples=[
+                ["W2741809807", 5],
+                ["https://openalex.org/W2741809807", 3],
+            ],
+            inputs=[cited_id, citing_max],
+            label="A short id, and the same work as a full URL",
+        )
+        citing_btn.click(
+            _run_citing, inputs=[api_key_in, cited_id, citing_max],
+            outputs=[citing_out, citing_raw], api_name=False,
         )
 
     with gr.Tab("Classify text"):
@@ -651,10 +834,11 @@ with gr.Blocks(title="OpenAlex MCP demo") as demo:
         gr.Examples(
             examples=[
                 ["Automatic subject indexing of library records using transformer language models"],
-                ["too short"],
+                ["Sea-level rise projections for the North Atlantic under two emission scenarios"],
+                ["A randomised trial of cognitive behavioural therapy for chronic insomnia in adults"],
             ],
             inputs=[text],
-            label="A classifiable abstract, and an input the tool rejects",
+            label="Three abstracts from three different domains",
         )
         classify_btn.click(
             _run_classify, inputs=[api_key_in, text],
@@ -667,6 +851,8 @@ with gr.Blocks(title="OpenAlex MCP demo") as demo:
     # The only declared MCP tools. Names match the canonical server's.
     gr.api(search_works, api_name="search_works")
     gr.api(search_semantic, api_name="search_semantic")
+    gr.api(lookup_by_doi, api_name="lookup_by_doi")
+    gr.api(get_citing_works, api_name="get_citing_works")
     gr.api(classify_text, api_name="classify_text")
 
 

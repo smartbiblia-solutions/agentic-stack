@@ -16,6 +16,9 @@ sources — and everything is designed to be readable by an agent first: strict
 JSON on stdout, one common record schema across sources, and errors returned as
 data rather than as a crash.
 
+> **You are an agent asked to install any of this?** Go to
+> [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md) and follow it top to bottom.
+
 ### Where the documentation lives
 
 Each fact has one home; the others link to it.
@@ -23,9 +26,10 @@ Each fact has one home; the others link to it.
 | Document | Answers |
 |---|---|
 | this file | What is in the repo, which skill to reach for, and the conventions that hold everywhere |
+| [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md) | The install runbook, written for an agent to execute top to bottom |
 | [`cli/README.md`](cli/README.md) | Every `smartbiblia` command and flag *(fr)* |
 | [`cli/DEPLOYMENT.md`](cli/DEPLOYMENT.md) | Publishing a new CLI version to PyPI |
-| [`mcp/README.md`](mcp/README.md) | The five servers, their tools and ports, how to run them, MCP-specific conventions |
+| [`mcp/README.md`](mcp/README.md) | The seven servers, their tools and ports, how to run them, MCP-specific conventions |
 | `mcp/<server>/README.md` | Setting that server up in Claude Code, Claude Desktop, Cursor/VS Code; full flag reference; troubleshooting |
 | `skills/<skill>/SKILL.md` | What that skill does, when to use it, what it returns |
 | `CLAUDE.md` | Repo guidance for coding agents |
@@ -43,6 +47,8 @@ runs with no install step.
 | [`search-works-openalex`](skills/search-works-openalex/) | `openalex` | Search OpenAlex, resolve DOIs, follow citations, classify text by topic |
 | [`search-records-sudoc`](skills/search-records-sudoc/) | `sudoc` | Search the French union catalogue over SRU/UNIMARC: search, PPN/ISBN lookup, counts, index scan |
 | [`search-records-hal`](skills/search-records-hal/) | `hal` | Search HAL, the French open repository, collection-first (Solr) |
+| [`search-theses-fr`](skills/search-theses-fr/) | `theses` | Search theses.fr, the French national register of doctoral theses: search, record with résumés, person index, facets |
+| [`lookup-citations-opencitations`](skills/lookup-citations-opencitations/) | `opencitations` | Look up citation counts, citing and cited works, self-citations and CC0 metadata from a DOI, PMID, OMID or ORCID |
 | [`search-authorities-idref`](skills/search-authorities-idref/) | `search-idref` | Search the French national authority file (Solr), fetch an authority by PPN, list its linked bibliography |
 | [`resolve-persons-idref`](skills/resolve-persons-idref/) | `resolve-idref` | Decide *which* IdRef authority is a given person, with a confidence score and a right to abstain |
 | [`generate-search-queries`](skills/generate-search-queries/) | `generate-queries` | Turn a research question into 8–15 validated bilingual (EN/FR) queries |
@@ -55,6 +61,8 @@ They chain:
 ```text
 generate-search-queries
   → search-works-openalex / search-records-hal / search-records-sudoc
+    / search-theses-fr
+      → lookup-citations-opencitations
       → synthesize-literature
 
 resolve-persons-idref → search-authorities-idref → search-records-sudoc
@@ -70,7 +78,8 @@ skill sits relative to the others.
 The same sources, exposed over [MCP](https://modelcontextprotocol.io) for agents
 that prefer a live connection to a shell tool: `openalex` (8011), `sudoc-sru`
 (8012), `primo` (8013), `recherche-data-gouv` (8014),
-`idref-resolver-api` (8015).
+`idref-resolver-api` (8015), `hal` (8016), `theses-fr` (8017),
+`opencitations` (8018).
 
 ```bash
 uv run mcp/openalex/mcp_server.py --transport stdio

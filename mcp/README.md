@@ -1,6 +1,6 @@
 # MCP servers
 
-Six [MCP](https://modelcontextprotocol.io) servers that give AI agents direct
+Seven [MCP](https://modelcontextprotocol.io) servers that give AI agents direct
 access to scholarly and bibliographic sources. Each one is a single
 self-contained `mcp_server.py` with inline
 [PEP 723](https://peps.python.org/pep-0723/) dependencies, runnable by
@@ -16,19 +16,14 @@ as a Hugging Face Space.
 | [`primo`](./primo/) | 8013 | **yes** | An institutional Primo (Ex Libris) discovery layer: catalogue search and record retrieval |
 | [`recherche-data-gouv`](./recherche-data-gouv/) | 8014 | no | French national research data repository (Dataverse): dataset search, usage metrics, metadata blocks |
 | [`idref-resolver-api`](./idref-resolver-api/) | 8015 | **yes** | Person-to-IdRef-PPN alignment from free-text clues, with an explicit abstention when the evidence is too weak |
+| [`theses-fr`](./theses-fr/) | 8017 | no | theses.fr, the French national register of doctoral theses (ABES): thesis search with résumé hydration, record lookup by NNT, person index, facets |
+| [`opencitations`](./opencitations/) | 8018 | no | OpenCitations Meta v1 and Index v2 (CC0): citation and reference counts, citing and cited works with self-citation flags, bibliographic metadata by identifier |
 
 Each server has its own README with client-by-client setup (Claude Code, Claude
 Desktop, Cursor/VS Code), a zero-install stdio recipe, the full flag reference
 and troubleshooting.
 
-Some demo MCP servers are deployed as HuggingFace spaces
-
-| Server | HF space | Demo MCP Server URL (Streamable HTTP) |
-|---|---|---|---|
-| [`openalex`](./openalex/) | 8011 | recommended |
-| [`sudoc-sru`](./sudoc-sru/) | [`Geraldine/sudoc-sru-mcp`](https://huggingface.co/spaces/Geraldine/sudoc-sru-mcp) | `https://geraldine-sudoc-sru-mcp.hf.space/gradio_api/mcp/` |
-| [`primo`](./primo/) | [`Geraldine/exlibris-primo-mcp`](https://huggingface.co/spaces/Geraldine/exlibris-primo-mcp) | `https://geraldine-exlibris-primo-mcp.hf.space/gradio_api/mcp/` |
-| [`recherche-data-gouv`](./recherche-data-gouv/) | [`Geraldine/recherche-data-gouv-mcp`](https://huggingface.co/spaces/Geraldine/recherche-data-gouv-mcp) | `https://geraldine-recherche-data-gouv-mcp.hf.space/gradio_api/mcp/` |
+**Some demo MCP servers are deployed as HuggingFace spaces, see this [HuggingFace collection](https://huggingface.co/collections/Geraldine/academic-mcp-servers).**
 
 >**Important tip related to demo MCP deployment in Claude Desktop**: Claude Desktop does not natively support direct HTTP/URL-based fields
  (expects local stdio processes using command and args, "http" type or url key are not allowed). 
@@ -64,6 +59,12 @@ Some demo MCP servers are deployed as HuggingFace spaces
 
 **`idref-resolver-api`** — `align_person`
 
+**`theses-fr`** — `search_theses`, `get_thesis`, `search_persons`,
+`list_facets`, `search_by_organisme`
+
+**`opencitations`** — `get_citation_counts`, `get_citations`,
+`get_references`, `lookup_metadata`, `list_works_by_person`
+
 ---
 
 ## Quick start
@@ -89,7 +90,7 @@ cp mcp/.env.example mcp/.env    # fill in OPENALEX_API_KEY, the PRIMO_* and IDRE
 docker compose -f mcp/compose.yml up --build
 ```
 
-Endpoints: `http://localhost:{8011,8012,8013,8014,8015,8016}/mcp`.
+Endpoints: `http://localhost:{8011,8012,8013,8014,8015,8016,8017,8018}/mcp`.
 
 ### In a browser
 
@@ -175,6 +176,8 @@ connection:
 | `sudoc-sru` | [`search-records-sudoc`](../skills/search-records-sudoc/SKILL.md) |
 | `hal` | [`search-records-hal`](../skills/search-records-hal/SKILL.md) |
 | `idref-resolver-api` | [`resolve-persons-idref`](../skills/resolve-persons-idref/SKILL.md) |
+| `theses-fr` | [`search-theses-fr`](../skills/search-theses-fr/SKILL.md) |
+| `opencitations` | [`lookup-citations-opencitations`](../skills/lookup-citations-opencitations/SKILL.md) |
 
 ---
 

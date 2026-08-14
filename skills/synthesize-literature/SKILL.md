@@ -123,40 +123,31 @@ All are backed by the same CLI and contract pack.
 
 --- 
 
+## Reading a task's contract
+
+Every task `<t>` in the table above has exactly two files, both named after it:
+
+- `prompts/<t>.md` — the methodological contract. **Read the file directly.**
+- `schemas/<t>.schema.json` — the output schema. **Read the file directly.**
+
+There is no subcommand for either; opening a file is not something a script
+should do on your behalf.
+
 ## CLI usage
 
-```bash
-uv run ./skills/synthesize-literature/scripts/cli.py <command> [flags]
-```
-
-### `list` — list available tasks
+The script does one thing: check the JSON you produced against a task's schema.
 
 ```bash
-uv run ./skills/synthesize-literature/scripts/cli.py list
-```
-
-### `prompt` — read the methodological contract for a task
-
-```bash
-uv run ./skills/synthesize-literature/scripts/cli.py prompt --task screen_study_prisma
-```
-
-### `schema` — read the JSON output schema for a task
-
-```bash
-uv run ./skills/synthesize-literature/scripts/cli.py schema --task summarize_paper
-```
-
-### `validate` — validate a task output against its schema
-
-```bash
-uv run ./skills/synthesize-literature/scripts/cli.py validate \
+uv run ./skills/synthesize-literature/scripts/cli.py \
   --task screen_study_prisma \
   --json-file ./screening_W123.json
 ```
 
-Returns `{"valid": true, "errors": []}` or `{"valid": false, "errors": [...]}`.
-Exit code is `0` on success, `1` on validation failure.
+Returns `{"valid": true, "errors": []}` or `{"valid": false, "errors": [...]}`,
+one line per problem as `<json-path>: <what is wrong>`. Exit code is `0` on
+success, `1` on validation failure — the failing exit code is the point of the
+script. `--task` accepts the eight task names listed above; `--help` prints
+them.
 
 ---
 
@@ -177,18 +168,16 @@ Exit code is `0` on success, `1` on validation failure.
 
 ## Output
 
-`list` returns the task inventory, `prompt` the methodological contract as
-markdown on stdout, `schema` the JSON Schema for a task, and `validate` a
-verdict object:
+The script returns a verdict object:
 
 ```jsonc
 { "valid": true,  "errors": [] }
-{ "valid": false, "errors": ["'decision' is a required property"] }
+{ "valid": false, "errors": ["$: 'decision' is a required property"] }
 ```
 
 The *task* outputs themselves are produced by the agent, not by the CLI: each
-one is a JSON object conforming to the schema returned by `schema --task <name>`.
-Always run `validate` on them before chaining to the next step.
+one is a JSON object conforming to `schemas/<task>.schema.json`. Always
+validate them before chaining to the next step.
 
 ---
 

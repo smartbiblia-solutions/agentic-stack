@@ -11,7 +11,7 @@ description: >
   request about the lifecycle of research data from collection to archival.
   Produces a structured Markdown document covering description, collection,
   curation, sharing, preservation and ethics.
-version: "0.2.0"
+version: "0.4.0"
 author: smartbiblia
 maturity: experimental
 preferred_output: markdown
@@ -57,8 +57,10 @@ a handful of project facts into an industry-standard DMP that satisfies funder
 and institutional requirements while addressing the FAIR principles (Findable,
 Accessible, Interoperable, Reusable) in every section.
 
-This skill has no CLI: it is a prompt contract executed by the agent. The
-deliverable is a single Markdown document.
+This skill is **prose only**. There is no script, no JSON schema and nothing to
+install: the deliverable is a Markdown document written by the agent, and every
+rule it must respect is on this page. Read it, gather the inputs, check the
+table in *Coherence checks* before drafting, write the plan.
 
 ---
 
@@ -84,19 +86,25 @@ deliverable is a single Markdown document.
 ## Input
 
 Five parameters are required. Ask for any that are missing before drafting —
-do not invent them:
+never invent one:
 
-1. **project_title** — official title of the research project.
-2. **data_type** — nature of the data (survey results, patient records,
-   geospatial imagery, interview transcripts…).
-3. **research_scope** — duration and expected deliverables.
-4. **sharing_level** — intended access level (public/open, restricted/IRB-only,
-   internal).
-5. **data_sensitivity** — ethical classification (PII, sensitive health data,
-   de-identified…).
+| Parameter | What it is |
+|---|---|
+| `project_title` | Official title of the research project |
+| `data_type` | Nature of the data (survey results, patient records, geospatial imagery, interview transcripts…) |
+| `research_scope` | Duration and expected deliverables |
+| `sharing_level` | `public` \| `restricted` \| `internal` \| `embargoed` |
+| `data_sensitivity` | `none` \| `de-identified` \| `pii` \| `sensitive-health` \| `other-regulated` |
 
-Optional parameters enrich the plan when supplied; prompt for them once, then
-proceed with whatever the user provides:
+Two more become required depending on the last two:
+
+| Parameter | Required when |
+|---|---|
+| `anonymization_procedure` | `data_sensitivity` is `pii`, `sensitive-health` or `other-regulated` — how identifiers are removed or replaced |
+| `access_procedure` | `sharing_level` is `restricted` or `embargoed` — how a third party requests and obtains access |
+
+Optional parameters enrich the plan when supplied. Ask for them once, then
+proceed with whatever the user gives:
 
 | Parameter | Purpose |
 |---|---|
@@ -111,43 +119,73 @@ proceed with whatever the user provides:
 
 ---
 
+## Coherence checks
+
+Run these three checks **before** writing a word of the plan. They are where a
+DMP actually goes wrong, and each one is a conversation with the user, not
+something to resolve on your own:
+
+| Check | Stop when | What to do |
+|---|---|---|
+| Completeness | Any of the five required parameters is still unknown | Ask for it. Do not draft around it. |
+| Sensitivity vs sharing | `data_sensitivity` is `pii` / `sensitive-health` / `other-regulated` **and** `sharing_level` is `public` | Say so plainly: identifiable data cannot be shared openly. Resolve with the user before drafting. |
+| Gated access | `sharing_level` is `restricted` or `embargoed` **and** no `access_procedure` | Ask how a third party requests access. A gated dataset with no documented route fails review. |
+
+Also required when the data is sensitive: an `anonymization_procedure`. Never
+write that sensitive data will be shared openly.
+
+---
+
 ## Execution protocol
 
-1. **Validate the input** — confirm the five required parameters; request any
-   missing item before proceeding.
-2. **Align on FAIR** — every section must address Findable, Accessible,
-   Interoperable and Reusable, explicitly or implicitly.
-3. **Write the mandatory sections** — all six, even when the user gives minimal
-   detail; extrapolate from disciplinary best practice and say so.
+1. **Collect the five required parameters**, plus the conditional ones the
+   answers make necessary. Ask once for the optional parameters.
+2. **Run the coherence checks** above. If one stops you, ask the user; do not
+   paper over the conflict in prose.
+3. **Write the six mandatory sections** as Markdown, even when the user gives
+   minimal detail — extrapolate from disciplinary best practice.
 4. **Add the optional subsections** for whichever optional parameters were
    supplied.
-5. **State the assumptions** — anything extrapolated rather than given must be
-   flagged so the researcher can correct it.
+5. **Close with `## Assumptions`** — one entry per default you applied, with
+   its basis, so the researcher can tell their facts from your defaults.
 
 ---
 
 ## Output
 
-A single cohesive Markdown document titled
-**"Data Management Plan for \<Project Title\>"**, using `##` for each mandatory
-section and `###` for optional subsections, with bulleted lists where they aid
-readability.
+A single cohesive Markdown document titled **"Data Management Plan for
+\<Project Title\>"**, `##` per mandatory section, `###` for optional
+subsections, bulleted lists where they aid readability.
 
-Mandatory sections:
+Mandatory sections, in this order:
 
-1. **Data Description** — overview of the data, scope and lifecycle stage.
-2. **Data Collection** — methods, tools, ethical/IRB approvals.
+1. **Data Description** — the data, its scope, lifecycle stage, expected volume.
+2. **Data Collection** — methods, instruments, ethical/IRB approvals.
 3. **Data Management & Curation** — version control, quality checks,
-   documentation, metadata standards.
-4. **Data Sharing & Access** — repository, permission model, licensing,
-   access procedure.
+   documentation, metadata standard.
+4. **Data Sharing & Access** — repository, permission model, licence, access
+   procedure.
 5. **Data Preservation & Archiving** — long-term storage, retention period,
-   migration and backup.
-6. **Ethical Considerations** — consent, anonymization, regulatory compliance.
+   migration, backup.
+6. **Ethical Considerations** — consent, anonymization, regulatory compliance
+   (GDPR, IRB).
 
-Optional subsections, added when the corresponding parameters are supplied:
+Optional subsections, added when the corresponding parameters were supplied:
 Data Security & Privacy, Roles & Responsibilities, Timeline & Milestones,
 Budget & Resources, Funder & Institutional Compliance, Review & Update Process.
+
+The document closes with `## Assumptions`, each entry giving the statement and
+the basis it rests on:
+
+```markdown
+## Assumptions
+
+- **10-year retention after project end.** Default for ANR-funded
+  social-science projects; not supplied by the researcher.
+```
+
+Each section addresses the FAIR principles it bears on in prose — no
+compliance table; a funder reads paragraphs.
 
 ---
 
@@ -172,9 +210,14 @@ feed the conclusions in as context.
 ## Rules
 
 - Never invent a required parameter — ask for it.
-- Mark every extrapolated recommendation as such; the researcher must be able
-  to tell their facts from your defaults.
+- Mark every extrapolated recommendation as an assumption; the researcher must
+  be able to tell their facts from your defaults.
 - Prefer open, non-proprietary formats and a certified repository unless the
-  user's constraints rule them out; justify the exception in the plan.
+  user's constraints rule them out; justify the exception in the section that
+  needs it.
 - Sensitive data (PII, health) requires an explicit anonymization and access
   procedure — never write "data will be shared openly" over sensitive data.
+- Write in the user's language, at the register of a grant application:
+  specific, sober, ready to paste into a funder form.
+- The deliverable is Markdown. Do not emit a JSON intermediate; there is
+  nothing downstream that consumes one.

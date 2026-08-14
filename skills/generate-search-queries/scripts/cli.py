@@ -3,80 +3,56 @@
 # requires-python = ">=3.11"
 # dependencies = ['jsonschema']
 # ///
+"""Validate a generated query set against the pack's JSON schema.
+
+Validation is the only thing here that needs code. The prompt and the schema
+are files: read them with the file tool, not through a subcommand that shells
+out to `cat`.
+"""
 
 import argparse
 import json
 import pathlib
 from typing import Any
 
-try:
-    import jsonschema
-except ImportError as e:  # pragma: no cover
-    raise RuntimeError("Install jsonschema: pip install jsonschema") from e
+import jsonschema
 
-_SRC_DIR = pathlib.Path(__file__).resolve().parent
-_ROOT_DIR = _SRC_DIR.parent
-_PROMPT_PATH = _ROOT_DIR / "prompts" / "generate_search_queries.md"
-_SCHEMA_PATH = _ROOT_DIR / "schemas" / "generate_search_queries.schema.json"
+_SCHEMA_PATH = (
+    pathlib.Path(__file__).resolve().parent.parent
+    / "schemas"
+    / "generate_search_queries.schema.json"
+)
 
 
-def load_prompt() -> str:
-    return _PROMPT_PATH.read_text(encoding="utf-8")
+def _short(message: str, limit: int = 200) -> str:
+    """jsonschema inlines the offending instance; keep the diagnosis, drop the dump."""
+    return message if len(message) <= limit else message[:limit] + "…"
 
 
-def load_schema() -> dict[str, Any]:
-    return json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
-
-
-def validate_output(data: dict[str, Any]) -> dict[str, Any]:
-    schema = load_schema()
-    try:
-        jsonschema.validate(instance=data, schema=schema)
-        return {"valid": True, "errors": []}
-    except jsonschema.ValidationError as e:
-        return {"valid": False, "errors": [str(e)]}
-
-
-def _read_json(path: str) -> Any:
-    return json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+def validate_output(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return {"valid": False, "errors": ["Top-level JSON must be an object."]}
+    schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    validator = jsonschema.Draft202012Validator(schema)
+    errors = [
+        f"{e.json_path}: {_short(e.message)}"
+        for e in sorted(validator.iter_errors(data), key=lambda e: list(e.absolute_path))
+    ]
+    return {"valid": not errors, "errors": errors}
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(prog="build-search-queries")
-    sub = ap.add_subparsers(dest="cmd", required=True)
-
-    sub.add_parser("prompt", help="Print the task prompt")
-    sub.add_parser("schema", help="Print the JSON schema")
-
-    p_validate = sub.add_parser("validate", help="Validate JSON output file")
-    p_validate.add_argument("--json-file", required=True)
-
+    ap = argparse.ArgumentParser(
+        prog="generate-search-queries",
+        description="Validate a query set against schemas/generate_search_queries.schema.json",
+    )
+    ap.add_argument("--json-file", required=True, help="Path to the JSON to validate")
     args = ap.parse_args()
 
-    if args.cmd == "prompt":
-        print(load_prompt())
-        return 0
-
-    if args.cmd == "schema":
-        print(json.dumps(load_schema(), ensure_ascii=False, indent=2))
-        return 0
-
-    if args.cmd == "validate":
-        data = _read_json(args.json_file)
-        if not isinstance(data, dict):
-            print(
-                json.dumps(
-                    {"valid": False, "errors": ["Top-level JSON must be an object."]},
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            )
-            return 1
-        res = validate_output(data)
-        print(json.dumps(res, ensure_ascii=False, indent=2))
-        return 0 if res.get("valid") else 1
-
-    return 2
+    data = json.loads(pathlib.Path(args.json_file).read_text(encoding="utf-8"))
+    result = validate_output(data)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result["valid"] else 1
 
 
 if __name__ == "__main__":

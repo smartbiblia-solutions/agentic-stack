@@ -65,6 +65,13 @@ path = "skills/synthesize-literature"
 maturity = "stable"
 tags = ["synthesis", "review", "prisma", "literature"]
 
+[skills.theses]
+name = "search-theses-fr"
+description = "Recherche dans theses.fr : thèses de doctorat françaises soutenues ou en préparation, résumés, directeurs et jurys"
+path = "skills/search-theses-fr"
+maturity = "beta"
+tags = ["theses", "doctoral", "french", "abes", "open-access"]
+
 [skills.convert-unimarc]
 name = "convert-records-unimarc"
 description = "Conversion de notices UNIMARC entre formats XML, JSON et ISO 2709 binaire"
@@ -140,6 +147,17 @@ port = 8014
 env = ["RECHERCHE_DATA_GOUV_API_URL"]
 env_required = []
 tags = ["french", "data", "dataverse", "open-science"]
+
+[mcp.theses-fr]
+name = "theses-fr"
+description = "Serveur MCP theses.fr : recherche de thèses de doctorat françaises (soutenues ou en préparation), notice complète avec résumés bilingues, index des personnes et facettes"
+path = "mcp/theses-fr"
+entrypoint = "mcp_server.py"
+maturity = "beta"
+port = 8017
+env = []
+env_required = []
+tags = ["theses", "doctoral", "french", "abes", "open-access"]
 
 [mcp.idref-resolver-api]
 name = "idref-resolver-api"

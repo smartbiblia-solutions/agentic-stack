@@ -14,23 +14,24 @@ short_description: Search scholarly works through the openalex database.
 
 A standalone Gradio demo of the
 [`openalex`](https://github.com/smartbiblia-solutions/agentic-stack/tree/main/mcp/openalex)
-MCP server: search ~250 million scholarly works by keyword or by meaning, or
-classify a title or abstract into OpenAlex topics.
+MCP server: search ~250 million scholarly works by keyword or by meaning, resolve
+DOIs, follow forward citations, or classify a title or abstract into OpenAlex
+topics.
 
-The **canonical MCP endpoint is `mcp_server.py`** one folder up, with the full
-tool set (`search_works`, `search_semantic`, `lookup_by_doi`, `get_citing_works`,
-`classify_text`)
-and no tightened result limits. This app exposes three of them at
-`/gradio_api/mcp/sse`; that endpoint is demo-grade and secondary. Set
+The **canonical MCP endpoint is `mcp_server.py`** one folder up, with no
+tightened result limits. This app serves the same five tools — `search_works`,
+`search_semantic`, `lookup_by_doi`, `get_citing_works`, `classify_text` — at
+`/gradio_api/mcp/`; that endpoint is demo-grade and secondary. Set
 `GRADIO_MCP_SERVER=false` wherever the real server is reachable, so clients
 cannot bind to the wrong one.
 
 ## It is standalone
 
-`app.py` imports nothing from the parent folder, this folder is the Space root,
-so `mcp_server.py` does not exist here. The three tools are a **hand-kept copy** of
-the canonical ones: same names, same argument names and types, same response
-shape including `error`. **Change one, change the other.**
+`app.py` imports nothing from the parent folder: this folder is the Space root,
+so `mcp_server.py` does not exist here. The five tools are a **hand-kept copy** of
+the canonical ones — same names, same argument names and types, same response
+shape including `error` — so the surfaces match tool for tool. **Change one,
+change the other.**
 
 `search_works` carries the canonical signature in full — `date_from`, `date_to`,
 `sort_by`, `author` and `institution` included, with the same name/ORCID and
@@ -43,6 +44,13 @@ narrower `select`.
 arguments are years rather than dates, and its `total_found` is always `null`,
 because that is what the OpenAlex vector endpoint imposes: it reports the result
 cap, never a count. Results carry an extra `relevance_score`.
+
+`lookup_by_doi` takes the same `dois` list and normalizes short DOIs to
+`https://doi.org/…` the same way. The canonical server pages through as many
+50-DOI batches as it is given; here one batch is the cap, 25 DOIs per call.
+
+`get_citing_works` and `classify_text` carry the canonical signatures unchanged,
+`max_results` clamped to 10 aside.
 
 ## Run it
 
@@ -106,7 +114,7 @@ Add the following configuration to your MCP config
 ```
 {
   "mcpServers": {
-    "primo": {
+    "openalex": {
       "url": "http://localhost:7860/gradio_api/mcp/",
 	  "headers": {
 	    "X-Openalex-Api-Key": "<your-personal-access-token>"
@@ -123,7 +131,7 @@ Add the following configuration to your MCP config
 ```
 {
   "mcpServers": {
-    "primo": {
+    "openalex": {
       "url": "https://geraldine-openalex-mcp.hf.space/gradio_api/mcp/",
 	  "headers": {
 	    "X-Openalex-Api-Key": "<your-personal-access-token>"

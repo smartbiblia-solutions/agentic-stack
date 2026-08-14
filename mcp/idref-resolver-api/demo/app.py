@@ -281,10 +281,18 @@ with gr.Blocks(title="IdRef resolver MCP demo") as demo:
         examples=[
             ["Bruno Latour", "Nous n'avons jamais été modernes", "sociologie des sciences",
              "Sciences Po", "1991", "", "lexical-idf", 20, 0.65, 0.08],
-            ["Jean Dupont", "", "", "", "", "", "lexical-idf", 20, 0.65, 0.08],
+            ["Michel Foucault", "Surveiller et punir : naissance de la prison",
+             "philosophie", "Collège de France", "1975", "", "lexical-idf", 20, 0.65, 0.08],
+            ["Valérie Robert", "", "études germaniques",
+             "Université Sorbonne Nouvelle", "", "", "lexical-idf", 20, 0.65, 0.08],
+            ["Bruno Latour", "Nous n'avons jamais été modernes", "sociologie des sciences",
+             "Sciences Po", "1991", "", "albert-bge-m3", 20, 0.65, 0.08],
+            ["Bruno Latour", "Nous n'avons jamais été modernes", "sociologie des sciences",
+             "Sciences Po", "1991", "", "lexical-idf", 20, 0.85, 0.20],
         ],
         inputs=inputs,
-        label="Un cas qui aboutit, et un homonyme où l'outil s'abstient",
+        label="Titre décisif, autre titre décisif, indices sans œuvre, comparaison "
+              "sémantique, puis le même cas avec des seuils sévères",
     )
     align_btn.click(_run, inputs=inputs, outputs=[verdict_out, raw_out], api_name=False)
 

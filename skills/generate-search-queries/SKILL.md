@@ -78,24 +78,28 @@ Output is strict JSON validated against a schema.
 
 ---
 
+## Files
+
+| File | What it is | How to use it |
+|---|---|---|
+| `prompts/generate_search_queries.md` | The methodological prompt | **Read it directly** |
+| `schemas/generate_search_queries.schema.json` | The output schema | **Read it directly** |
+| `scripts/cli.py` | The validator | Run it (below) |
+
+Single task, so no `--task` flag anywhere.
+
 ## CLI usage
 
-This skill exposes a single task. There is no `--task` flag.
+The script does one thing: check the JSON you produced against the schema.
 
 ```bash
-# Read the methodological prompt
-uv run ./skills/generate-search-queries/scripts/cli.py prompt
-
-# Read the output schema
-uv run ./skills/generate-search-queries/scripts/cli.py schema
-
-# Validate the produced JSON
-uv run ./skills/generate-search-queries/scripts/cli.py validate \
-  --json-file ./queries.json
+uv run ./skills/generate-search-queries/scripts/cli.py --json-file ./queries.json
 ```
 
-Returns `{"valid": true, "errors": []}` or `{"valid": false, "errors": [...]}`.
-Exit code is `0` on success, `1` on validation failure.
+Returns `{"valid": true, "errors": []}` or `{"valid": false, "errors": [...]}`,
+one line per problem as `<json-path>: <what is wrong>`. Exit code is `0` on
+success, `1` on validation failure — the failing exit code is the point of the
+script.
 
 ---
 
@@ -165,7 +169,8 @@ flags: `open_access_recommended` → `--oa`, `date_range_recommendation` →
 
 ## Rules
 
-- Read the prompt, produce JSON, validate. Fix and re-validate on failure.
+- Read `prompts/generate_search_queries.md`, produce JSON, validate. Fix and
+  re-validate on failure.
 - Max 2 retries on schema validation failure, then stop and report the error.
 - Return JSON only — no prose, no markdown outside the JSON object.
 
@@ -177,6 +182,5 @@ flags: `open_access_recommended` → `--oa`, `date_range_recommendation` →
   Max 2 retries, then stop.
 - **Fewer than 8 queries generated**: schema validation will catch this —
   the `queries` array requires `minItems: 8`.
-- **Prompt file not found**: check that the file is at
-  `./skills/generate-search-queries/prompts/generate_search_queries.md`
-  (note: the CLI internally maps to this path).
+- **Prompt file not found**: it lives at
+  `./skills/generate-search-queries/prompts/generate_search_queries.md`.

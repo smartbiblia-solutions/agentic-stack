@@ -29,6 +29,20 @@ that [`uv`](https://docs.astral.sh/uv/) installs automatically on first run.
 
 ---
 
+## Example prompts
+
+Once the server is connected, these are the kinds of request it answers:
+
+- *"Find Sudoc records whose title is about jardins médiévaux, in French, published after 2010."* → `search_sudoc`
+- *"What does the Sudoc hold under the RAMEAU subject 'Bibliothèques numériques'?"* → `search_sudoc` on the subject index
+- *"Show me the full record for PPN 052401367."* → `lookup_by_ppn`
+- *"Is there a Sudoc record for ISBN 978-2-07-036822-8?"* → `lookup_by_isbn`
+- *"How many theses match this query? Don't fetch them, I only need the size of the corpus."* → `count_records`
+- *"I'm not sure how this author's name is normalised — browse the author index around 'Peroni'."* → `scan_index`, then `search_sudoc` with the exact heading
+- *"List the theses (NNT) defended on this subject, newest first."* → `search_sudoc` with a document-type filter
+
+---
+
 ## Prerequisites
 
 **`uv`** only — no API key, no registration:

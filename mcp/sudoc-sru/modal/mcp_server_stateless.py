@@ -1,0 +1,1168 @@
+"""Sudoc SRU MCP server — Modal deployment.
+
+A **standalone duplicate** of the canonical server, `../mcp_server.py`, built on
+the shape of Modal's own FastMCP example: nothing is mounted into the image and
+nothing is imported from the parent folder. Everything the server needs is
+defined inside `make_mcp_server()`, including its runtime imports — Modal loads
+this file on the local machine to build the app, where `fastmcp` and `httpx` are
+not installed, so a top-level import of either would break `modal deploy`.
+
+The tools below are a **hand-kept copy** of the canonical ones — same names, same
+arguments, same envelope. Change one, change the other.
+
+Tools served: `search_sudoc`, `lookup_by_ppn`, `lookup_by_isbn`, `count_records`, `scan_index`.
+
+  # Ephemeral deployment that reloads on save
+  uvx modal serve mcp/sudoc-sru/modal/mcp_server_stateless.py
+
+  # List the deployed tools (and optionally call one)
+  uvx modal run mcp/sudoc-sru/modal/mcp_server_stateless.py::test_tool
+
+  # Persistent deployment
+  uvx modal deploy mcp/sudoc-sru/modal/mcp_server_stateless.py
+
+The MCP endpoint is the printed URL with `/mcp/` appended:
+
+    https://<workspace>--smartbiblia-mcp-sudoc-sru-web.modal.run/mcp/
+
+Modal load-balances one URL across containers that come and go, so the transport
+is built **stateless** (`stateless_http=True`): a new transport per request, no
+session pinned to a replica — the same mode as
+`mcp_server.py --transport http --stateless`. A stateless response carries no
+`mcp-session-id` header, which is how to check the mode of a running server.
+
+Environment: none. The Abes SRU service is public and anonymous.
+"""
+
+import modal
+
+APP_NAME = "smartbiblia-mcp-sudoc-sru"
+
+image = modal.Image.debian_slim(python_version="3.12").uv_pip_install(
+    "fastapi>=0.115",
+    "fastmcp>=3.4,<4",  # keep in step with the pin in ../mcp_server.py
+    "httpx",
+)
+
+app = modal.App(APP_NAME, image=image)
+
+# No credential to pass. `SECRETS` stays declared so the two functions below
+# read the same as every other server in this repository.
+SECRETS: list[modal.Secret] = []
+
+
+def make_mcp_server():
+    """Build the FastMCP server served by `web()`.
+
+    The body is `../mcp_server.py` without its argparse layer: each tuning flag
+    becomes the constant below at exactly its default value, which is what
+    `uv run mcp_server.py` with no flag selects. Endpoint and credentials stay
+    environment-based, so a `modal.Secret` configures this deployment the way
+    `.env` configures the container.
+    """
+    import os
+    import random
+    import re
+    import time
+    import xml.etree.ElementTree as ET
+    from typing import Any
+
+    import httpx
+    from fastmcp import FastMCP
+
+    HTTP_TIMEOUT   = 30.0
+    MAX_RETRIES    = 3
+    BACKOFF_BASE   = 1.0
+    BACKOFF_FACTOR = 2.0
+    JITTER_MAX     = 0.25
+    TRACE_DEFAULT  = False
+
+    SRU_BASE_URL = "https://www.sudoc.abes.fr/cbs/sru/"
+    SRU_NS       = {"srw": "http://www.loc.gov/zing/srw/"}
+
+
+    # ══════════════════════════════════════════════════════════════════════════════
+    # SECTION : SRU query encoding
+    # ══════════════════════════════════════════════════════════════════════════════
+    #
+    # Règle absolue du protocole SRU (ABES) :
+    #   Le `=` dans une clause de recherche doit TOUJOURS être encodé %3D.
+    #   Sans cela, le serveur confond l'opérateur de recherche avec le séparateur
+    #   de paramètre URL et renvoie une erreur ou zéro résultat.
+    #
+    # Tableau complet des encodages :
+    #   =    → %3D   (OBLIGATOIRE après chaque clé d'index)
+    #   |    → %7C   (opérateur booléen OU)
+    #   "    → %22   (expression exacte)
+    #   ,    → %2C   (index PER : Nom,Prénom)
+    #   /    → %2F   (index COT : cotes)
+    #   >=   → %3E%3D (date supérieure ou égale)
+    #   <=   → %3C%3D (date inférieure ou égale)
+    #   >    → %3E   (date strictement supérieure)
+    #   <    → %3C   (date strictement inférieure)
+    #   *              (troncature — passé tel quel, accepté par le serveur)
+    #   -              (tirets dans identifiants — passé tel quel)
+    #   espace → +    (entre tokens, hors phrases quotées)
+
+    def _encode_query(raw: str) -> str:
+        """
+        Encode une chaîne SRU naturelle pour une inclusion sûre après `&query=`.
+
+        Le appelant écrit la syntaxe naturelle, ex. : ``mti=jardins and japonais``
+        ou ``aut=zola and mti=nana``. Cette fonction :
+          1. Encode `=` → %3D (le changement le plus critique)
+          2. Encode `"` → %22, `,` → %2C, `/` → %2F, `|` → %7C
+          3. Remplace les espaces par `+`
+
+        Idempotente : si la chaîne contient déjà `%3D`, elle est renvoyée telle
+        quelle (le appelant a déjà encodé manuellement).
+        """
+        # Déjà encodé — passer en l'état
+        if "%3D" in raw or "%3d" in raw:
+            return raw
+
+        encoded = raw.replace("=", "%3D")
+        encoded = encoded.replace('"', "%22")
+        encoded = encoded.replace(",", "%2C")
+        encoded = encoded.replace("/", "%2F")
+        encoded = encoded.replace("|", "%7C")
+        encoded = re.sub(r" +", "+", encoded.strip())
+        return encoded
+
+
+    def _build_url(
+        query_encoded: str,
+        *,
+        start_record: int = 1,
+        maximum_records: int = 10,
+    ) -> str:
+        """Assemble l'URL SRU searchRetrieve complète."""
+        params = (
+            f"operation=searchRetrieve"
+            f"&version=1.1"
+            f"&recordSchema=unimarc"
+            f"&maximumRecords={maximum_records}"
+            f"&startRecord={start_record}"
+        )
+        return f"{SRU_BASE_URL}?{params}&query={query_encoded}"
+
+
+    # ══════════════════════════════════════════════════════════════════════════════
+    # SECTION : HTTP layer — retry / backoff (synchrone, httpx)
+    # ══════════════════════════════════════════════════════════════════════════════
+
+    # Un seul client poolé pour le processus : httpx.get() reconstruirait le pool —
+    # et rejouerait la poignée de main TLS — à chaque appel.
+    HTTP = httpx.Client(timeout=HTTP_TIMEOUT, follow_redirects=True)
+
+
+    def _backoff_sleep(attempt: int) -> float:
+        """Délai exponentiel avec gigue aléatoire."""
+        base = BACKOFF_BASE * (BACKOFF_FACTOR ** attempt)
+        jitter = random.uniform(0.0, JITTER_MAX) if JITTER_MAX > 0 else 0.0
+        return base + jitter
+
+
+    def _should_retry(status_code: int) -> bool:
+        """Codes HTTP qui méritent un retry (erreurs transitoires)."""
+        return status_code in (429, 500, 502, 503, 504)
+
+
+    def _get_xml(
+        url: str,
+        *,
+        trace: bool = False,
+    ) -> tuple[ET.Element, list[dict]]:
+        """
+        GET synchrone avec retry exponentiel. Renvoie (xml_root, trace_events).
+
+        Codes retriés : 429, 500, 502, 503, 504. Les timeouts sont aussi retriés.
+        Lève RuntimeError si toutes les tentatives échouent.
+        """
+        trace_events: list[dict] = []
+        started = time.perf_counter()
+        last_status: int | None = None
+        last_error:  str | None = None
+
+        for attempt in range(MAX_RETRIES):
+            t0 = time.perf_counter()
+            if trace:
+                trace_events.append({
+                    "event": "http_request", "method": "GET", "url": url,
+                    "attempt": attempt + 1, "max_retries": MAX_RETRIES,
+                    "timeout_s": HTTP_TIMEOUT,
+                })
+            try:
+                resp = HTTP.get(url)
+                last_status = resp.status_code
+
+                if trace:
+                    trace_events.append({
+                        "event": "http_response",
+                        "status_code": resp.status_code,
+                        "attempt": attempt + 1,
+                        "elapsed_ms": int((time.perf_counter() - t0) * 1000),
+                    })
+
+                if resp.status_code == 200:
+                    root = ET.fromstring(resp.content.decode("utf-8"))
+                    if trace:
+                        trace_events.append({
+                            "event": "http_success",
+                            "total_elapsed_ms": int((time.perf_counter() - started) * 1000),
+                        })
+                    return root, trace_events
+
+                if _should_retry(resp.status_code) and attempt < MAX_RETRIES - 1:
+                    sleep_s = _backoff_sleep(attempt)
+                    if trace:
+                        trace_events.append({
+                            "event": "http_retry_sleep",
+                            "status_code": resp.status_code,
+                            "attempt": attempt + 1,
+                            "sleep_s": round(sleep_s, 3),
+                        })
+                    time.sleep(sleep_s)
+                    continue
+
+                resp.raise_for_status()
+
+            except httpx.TimeoutException as e:
+                last_error = f"timeout: {e}"
+                if trace:
+                    trace_events.append({
+                        "event": "http_timeout", "attempt": attempt + 1,
+                        "elapsed_ms": int((time.perf_counter() - t0) * 1000),
+                    })
+                if attempt < MAX_RETRIES - 1:
+                    sleep_s = _backoff_sleep(attempt)
+                    if trace:
+                        trace_events.append({
+                            "event": "http_retry_sleep", "reason": "timeout",
+                            "sleep_s": round(sleep_s, 3),
+                        })
+                    time.sleep(sleep_s)
+                    continue
+                raise
+
+            except httpx.HTTPError as e:
+                last_error = str(e)
+                if trace:
+                    trace_events.append({
+                        "event": "http_error", "attempt": attempt + 1, "message": str(e),
+                    })
+                raise
+
+        raise RuntimeError(
+            f"Sudoc SRU : échec après {MAX_RETRIES} tentatives sur {url} "
+            f"(status={last_status}, error={last_error})"
+        )
+
+
+    # ══════════════════════════════════════════════════════════════════════════════
+    # SECTION : UNIMARC parsing
+    # ══════════════════════════════════════════════════════════════════════════════
+    #
+    # Le format renvoyé par le SRU Sudoc est l'UNIMARC encapsulé en XML.
+    # Structure d'une notice :
+    #
+    #   <srw:record>
+    #     <srw:recordData>
+    #       <record>
+    #         <controlfield tag="001">PPN</controlfield>
+    #         <datafield tag="200" ind1=" " ind2=" ">
+    #           <subfield code="a">Titre principal</subfield>
+    #           <subfield code="e">Sous-titre</subfield>
+    #         </datafield>
+    #         ...
+    #       </record>
+    #     </srw:recordData>
+    #   </srw:record>
+    #
+    # Correspondance des zones UNIMARC utilisées ici :
+    #   001        → PPN (identifiant Sudoc)
+    #   010 $a     → ISBN
+    #   011 $a     → ISSN
+    #   100 $a     → données codées (année extraite positions 9-12)
+    #   101 $a     → code langue (ISO 639-2)
+    #   200 $a $e  → titre principal + sous-titre
+    #   210 $a $c $d → lieu / éditeur / date de publication
+    #   215 $a     → description physique
+    #   300 $a     → notes générales
+    #   320 $a     → notes bibliographiques
+    #   328 $b $d $e $f → note de thèse (type, discipline, établissement, année)
+    #   410 $t     → titre de la collection / série
+    #   600–686    → points d'accès sujet (équivalents VMA/MSU)
+    #   700 $a $b  → auteur personne principal (Nom, Prénom)
+    #   701 $a $b  → auteurs personnes supplémentaires
+    #   710 $a     → collectivité auteur principale
+    #   711 $a     → collectivités auteurs supplémentaires
+    #   856 $u     → URL (ressources électroniques)
+
+    def _unimarc_root(record_data_el: ET.Element) -> ET.Element | None:
+        """Extrait l'élément <record> UNIMARC depuis le wrapper <srw:recordData>."""
+        for elem in record_data_el.iter():
+            local = elem.tag.split("}", 1)[-1]
+            if local == "record":
+                has_marc = any(
+                    child.tag.split("}", 1)[-1] in {"datafield", "controlfield"}
+                    for child in elem.iter()
+                )
+                if has_marc:
+                    return elem
+        return None
+
+
+    def _ctrl(record: ET.Element, tag: str) -> str | None:
+        """Retourne le texte d'un champ de contrôle UNIMARC (ex. 001)."""
+        for el in record.iter():
+            if el.tag.split("}", 1)[-1] == "controlfield" and el.get("tag") == tag:
+                return (el.text or "").strip() or None
+        return None
+
+
+    def _subfields(record: ET.Element, tag: str, *codes: str) -> list[str]:
+        """
+        Collecte les valeurs de sous-champs pour un tag donné et des codes donnés.
+        Retourne une liste plate de toutes les occurrences (répétitions incluses).
+        """
+        results = []
+        for df in record.iter():
+            if df.tag.split("}", 1)[-1] == "datafield" and df.get("tag") == tag:
+                for sf in df:
+                    if sf.tag.split("}", 1)[-1] == "subfield":
+                        code = sf.get("code", "")
+                        if not codes or code in codes:
+                            v = (sf.text or "").strip()
+                            if v:
+                                results.append(v)
+        return results
+
+
+    def _first(record: ET.Element, tag: str, *codes: str) -> str | None:
+        """Premier sous-champ correspondant, ou None."""
+        vals = _subfields(record, tag, *codes)
+        return vals[0] if vals else None
+
+
+    def _first_in_df(df: ET.Element, code: str) -> str | None:
+        """Premier sous-champ de code donné dans un élément datafield déjà isolé."""
+        for sf in df:
+            if sf.tag.split("}", 1)[-1] == "subfield" and sf.get("code") == code:
+                return (sf.text or "").strip() or None
+        return None
+
+
+    def _format_record(record: ET.Element) -> dict:
+        """
+        Convertit une notice UNIMARC XML en dict Python normalisé.
+
+        Champs extraits : PPN, titre, auteurs (personnes + collectivités), année,
+        éditeur, lieu de publication, langue, ISBN, ISSN, note de thèse, sujets
+        (RAMEAU), collection/série, description physique, notes, URLs.
+
+        Le champ `sudoc_url` est construit à partir du PPN :
+        https://www.sudoc.fr/<PPN>
+        """
+        ppn = _ctrl(record, "001")
+
+        # ── Titre (200 $a + $e séparés par " : ") ────────────────────────────────
+        title_parts = _subfields(record, "200", "a", "e")
+        title = " : ".join(title_parts) if title_parts else None
+
+        # ── Auteurs personnes (700 / 701 : $a Nom, $b Prénom) ────────────────────
+        authors: list[str] = []
+        for tag in ("700", "701"):
+            for df in record.iter():
+                if df.tag.split("}", 1)[-1] == "datafield" and df.get("tag") == tag:
+                    lastname  = _first_in_df(df, "a")
+                    firstname = _first_in_df(df, "b")
+                    if lastname:
+                        name = f"{lastname}, {firstname}" if firstname else lastname
+                        if name not in authors:
+                            authors.append(name)
+
+        # ── Auteurs collectivités (710 / 711 : $a) ────────────────────────────────
+        corp_authors: list[str] = []
+        for tag in ("710", "711"):
+            for df in record.iter():
+                if df.tag.split("}", 1)[-1] == "datafield" and df.get("tag") == tag:
+                    name = _first_in_df(df, "a")
+                    if name and name not in corp_authors:
+                        corp_authors.append(name)
+
+        # ── Année de publication ──────────────────────────────────────────────────
+        # Source primaire : zone 100 $a, positions 9-12 (année de publication)
+        year: int | None = None
+        raw_100a = _first(record, "100", "a")
+        if raw_100a and len(raw_100a) >= 13:
+            try:
+                year = int(raw_100a[9:13])
+            except ValueError:
+                pass
+        # Fallback : zone 210 $d (date de publication textuelle)
+        if year is None:
+            raw_210d = _first(record, "210", "d")
+            if raw_210d:
+                m = re.search(r"\b(1[0-9]{3}|20[0-9]{2})\b", raw_210d)
+                if m:
+                    year = int(m.group(1))
+
+        # ── Note de thèse (328) ───────────────────────────────────────────────────
+        # Zone UNIMARC 328 : $b type, $d discipline, $e établissement, $f année
+        thesis: dict | None = None
+        for df in record.iter():
+            if df.tag.split("}", 1)[-1] == "datafield" and df.get("tag") == "328":
+                thesis = {
+                    "type":        _first_in_df(df, "b"),
+                    "discipline":  _first_in_df(df, "d"),
+                    "institution": _first_in_df(df, "e"),
+                    "year":        _first_in_df(df, "f"),
+                }
+                break  # Une seule zone 328 attendue par notice
+
+        # ── Sujets (600–686 : tous les sous-champs concaténés par " -- ") ─────────
+        # Ces zones couvrent les vedettes RAMEAU et MeSH selon la zone utilisée.
+        subjects: list[str] = []
+        subject_tags = {str(t) for t in range(600, 687)}
+        for df in record.iter():
+            if df.tag.split("}", 1)[-1] == "datafield" and df.get("tag") in subject_tags:
+                parts = []
+                for sf in df:
+                    if sf.tag.split("}", 1)[-1] == "subfield":
+                        v = (sf.text or "").strip()
+                        if v:
+                            parts.append(v)
+                if parts:
+                    subjects.append(" -- ".join(parts))
+
+        sudoc_url = f"https://www.sudoc.fr/{ppn}" if ppn else None
+
+        return {
+            # Ancres d'identité communes à tous les connecteurs du dépôt.
+            # `ppn` / `sudoc_url` restent exposés sous leur nom Sudoc d'origine.
+            "source":           "sudoc",
+            "id":               ppn,
+            "url":              sudoc_url,
+            "ppn":              ppn,
+            "title":            title,
+            # `authors` expose en priorité les auteurs personnes physiques ;
+            # si aucun, repli sur les collectivités auteurs.
+            "authors":          authors if authors else corp_authors,
+            "personal_authors": authors,
+            "corporate_authors":corp_authors,
+            "year":             year,
+            "publisher":        _first(record, "210", "c"),
+            "pub_place":        _first(record, "210", "a"),
+            "language":         _first(record, "101", "a"),
+            "isbn":             _first(record, "010", "a"),
+            "issn":             _first(record, "011", "a"),
+            "thesis":           thesis,
+            "subjects":         subjects,
+            "series":           _first(record, "410", "t"),
+            "physical_desc":    _first(record, "215", "a"),
+            "notes":            (_subfields(record, "300", "a") +
+                                 _subfields(record, "320", "a")) or None,
+            "urls":             _subfields(record, "856", "u") or None,
+            "sudoc_url":        sudoc_url,
+        }
+
+
+    # ══════════════════════════════════════════════════════════════════════════════
+    # SECTION : helpers SRU internes
+    # ══════════════════════════════════════════════════════════════════════════════
+
+    def _get_total(encoded_query: str, *, trace: bool) -> tuple[int, list[dict]]:
+        """
+        Exécute une requête SRU avec maximumRecords=1 pour obtenir le nombre total
+        de notices correspondantes sans rapatrier les données.
+        """
+        url = _build_url(encoded_query, start_record=1, maximum_records=1)
+        root, tevents = _get_xml(url, trace=trace)
+        el = root.find(".//srw:numberOfRecords", namespaces=SRU_NS)
+        total = int(el.text) if el is not None and el.text else 0
+        return total, tevents
+
+
+    def _fetch_page(
+        encoded_query: str,
+        *,
+        start: int,
+        batch: int,
+        trace: bool,
+    ) -> tuple[list[dict], list[dict]]:
+        """
+        Rapatrie une page de résultats SRU et retourne les notices formatées.
+        Chaque notice UNIMARC est extraite, parsée et convertie en dict normalisé.
+        """
+        url = _build_url(encoded_query, start_record=start, maximum_records=batch)
+        root, tevents = _get_xml(url, trace=trace)
+        records: list[dict] = []
+        for srw_rec in root.findall(".//srw:record", namespaces=SRU_NS):
+            rd = srw_rec.find("./srw:recordData", namespaces=SRU_NS)
+            if rd is None:
+                continue
+            unimarc = _unimarc_root(rd)
+            if unimarc is not None:
+                records.append(_format_record(unimarc))
+        return records, tevents
+
+
+    def _apply_limitations(query: str, limitations: list[str]) -> str:
+        """
+        Combine la requête principale avec les limitations Sudoc (TDO, LAN/LAI,
+        PAY/PAI, APU) en les reliant par `and`.
+
+        Les limitations ne peuvent pas exister seules dans une requête SRU Sudoc :
+        elles doivent toujours être accompagnées d'au moins un index de recherche.
+        """
+        if not limitations:
+            return query
+        return query + " and " + " and ".join(limitations)
+
+
+    # ══════════════════════════════════════════════════════════════════════════════
+    # SECTION : MCP server
+    # ══════════════════════════════════════════════════════════════════════════════
+
+    mcp = FastMCP(
+        name="sudoc-sru",
+        instructions=(
+            "Connecteur Sudoc SRU — interroge le catalogue collectif des bibliothèques "
+            "de l'enseignement supérieur et de la recherche français (ABES). "
+            "Permet de rechercher des notices bibliographiques (livres, thèses, "
+            "périodiques, manuscrits, ressources électroniques…), de résoudre des "
+            "PPN ou ISBN, de compter des corpus, et d'explorer les index du catalogue."
+        ),
+    )
+
+
+    # ══════════════════════════════════════════════════════════════════════════════
+    # SECTION : enveloppe de réponse
+    # ══════════════════════════════════════════════════════════════════════════════
+
+    SERVER_NAME = "sudoc-sru"
+
+
+    def _envelope(
+        command: str,
+        results: list[dict] | None = None,
+        *,
+        total_found: int | None = 0,
+        error: str | None = None,
+        **extra: Any,
+    ) -> dict:
+        """
+        Construit l'enveloppe que renvoie chaque outil de ce serveur.
+
+        `results` est toujours un tableau et `error` toujours présent (null en cas de
+        succès) : un agent lit une défaillance amont dans la charge utile au lieu
+        d'avoir à rattraper une erreur de protocole. `total_found` vaut null quand la
+        source ne sait pas compter.
+        """
+        items = list(results or [])
+        out: dict = {
+            "source": SERVER_NAME,
+            "command": command,
+            "total_found": total_found,
+            "returned": len(items),
+            "results": items,
+            "error": error,
+        }
+        out.update(extra)
+        return out
+
+
+    # ── Tool 1 : search ───────────────────────────────────────────────────────────
+
+    @mcp.tool
+    def search_sudoc(
+        query: str,
+        max_results: int = 15,
+        doc_type: str | None = None,
+        language: str | None = None,
+        lang_major: str | None = None,
+        country: str | None = None,
+        country_major: str | None = None,
+        year_from: int | None = None,
+        year_to: int | None = None,
+        year_exact: int | None = None,
+    ) -> dict:
+        """
+        Recherche dans le catalogue Sudoc via le service SRU de l'Abes.
+
+        Retourne une liste de notices bibliographiques normalisées (titre, auteurs,
+        année, éditeur, langue, ISBN/ISSN, sujets, note de thèse, URL Sudoc…).
+
+        ─── Syntaxe de requête ────────────────────────────────────────────────────
+
+        Utiliser la syntaxe naturelle `index=terme`. L'encodage SRU (%3D etc.)
+        est appliqué automatiquement.
+
+        Opérateurs booléens (priorité égale, s'exécutent gauche à droite) :
+          AND  →  `and`, `+`, ou espace simple    (opérateur par défaut)
+          OR   →  `or` ou `|`
+          NOT  →  `not`
+        Parenthèses pour modifier la priorité : `pcp=pcdroit not (fgr=actes congres)`
+        Troncature : `*` en fin de terme  →  `mti=orthod*`, `nnt=2018perp*`
+        Expression exacte : guillemets  →  `tou="ocre jaune"`, `res="vers blancs"`
+
+        ─── Index disponibles ─────────────────────────────────────────────────────
+
+        Numéros (correspondance exacte) :
+          ppn   Numéro de notice Sudoc         ppn=070685045
+          isb   ISBN (avec ou sans tirets)     isb=9782070360246
+          isn   ISSN                           isn=2558-4278
+          num   Tous identifiants              num=DLV-20160831-5586
+          nnt   Numéro national de thèse       nnt=2018perp*
+          ocn   Numéro WorldCat                ocn=690860108
+          sou   Numéro source (corpus)         sou=star*
+          bqt   Code bouquet électronique      bqt=2014-110
+
+        Titre :
+          mti   Mots du titre (index mot)      mti=jardins japonais
+          tco   Titre complet (phrase)         tco=oui-oui*
+          tab   Titre abrégé périodique (phrase) tab=nat*
+          col   Collection (mot)               col=dunod
+
+        Auteur :
+          aut   Mots auteur (mot)              aut=lagerlof
+          per   Nom de personne (phrase)       per=eco,umberto  ou  per=eco*
+          org   Collectivité auteur (phrase)   org=insee  ou  org="insee rhone*"
+
+        Sujet :
+          msu   Mots sujets français (mot)     msu=hominides
+          vma   Point d'accès sujet RAMEAU (phrase) vma=abricot*
+          fgr   Forme / Genre (mot)            fgr=actes congres
+          msa   Mots sujets anglais (mot)      msa=apricot*
+          mee   Sujet MeSH anglais (mot)       mee=antivir*
+
+        Notes :
+          nth   Note de thèse (mot)            nth=biophysique and lyon
+          res   Résumé / sommaire (mot)        res="vers blancs"
+          lva   Note livre ancien (mot)        lva=memoires
+          fir   Source de financement (mot)    fir=labx
+          rec   Note de récompense (mot)       rec=award*
+
+        Exemplaires / holdings :
+          rbc   Numéro RCR de bibliothèque     rbc=840079901
+          pcp   Plan de Conservation Partagée  pcp=pcdroit
+          rpc   Reliure / Provenance           rpc="armes de Dominique*"
+          cot   Cote d'exemplaire (phrase)     cot="839.73 EKM"  ou  cot=839.7*
+
+        Général :
+          tou   Tous les mots                  tou="ocre jaune"
+          edi   Éditeur (mot)                  edi=gallimard
+
+        ─── Index de type phrase ──────────────────────────────────────────────────
+
+        Les index de type phrase (tco, tab, per, org, vma, cot) exigent la forme
+        complète et normalisée du terme. En cas de doute, utiliser la troncature :
+          per=lagerlof*     au lieu de  per=lagerlof,Selma
+          org="insee rhone*"  au lieu de  org="insee rhone-alpes"
+
+        Pour l'index `per`, la virgule entre nom et prénom est encodée
+        automatiquement : passer `per=eco,umberto` suffit.
+
+        ─── Remarque sur les accents ──────────────────────────────────────────────
+
+        Rechercher sans accents donne plus de résultats : le Sudoc cherche alors
+        les formes accentuées ET non accentuées. Exemple : `mti=memoires` >
+        `mti=mémoires`.
+
+        Args:
+            query: Requête SRU en syntaxe naturelle. Exemples :
+                   "mti=jardins and japonais"
+                   "aut=lagerlof and mti=troll"
+                   "nth=biophysique and lyon"
+                   "vma=abricot* or msa=apricot*"
+                   "pcp=pcdroit not (fgr=actes congres)"
+                   "rbc=840079901 and sou=star*"
+                   "per=eco,umberto"  (index phrase, virgule encodée auto)
+                   "tou=\\"ocre jaune\\""  (expression exacte)
+
+            max_results: Nombre maximum de notices à retourner (défaut 15, max 1000).
+                         La pagination interne est gérée automatiquement par paliers
+                         de 100 avec un délai de courtoisie de 200 ms entre pages.
+
+            doc_type: Code TDO (type de document) :
+                      a=articles  b=monographies imprimées  f=manuscrits
+                      g=enreg. sonores musicaux  i=images fixes  k=cartes
+                      m=partitions  n=enreg. sonores non musicaux
+                      o=monographies électroniques  t=périodiques et collections
+                      v=documents audiovisuels  x=objets/multimédia
+                      y=thèses (imprimées et électroniques)
+
+            language: Code langue ISO 639-2/3 pour l'index LAI (toutes langues
+                      sauf les 10 majeures).
+                      Exemples : "dan" (danois), "ara" (arabe), "jpn" (japonais),
+                      "swe" (suédois), "por" (portugais — utiliser lang_major).
+
+            lang_major: Code LAN pour les 10 langues majeures uniquement :
+                        ger eng spa fre ita lat dut pol por rus
+                        NE PAS combiner avec `language` pour la même langue.
+
+            country: Code pays ISO 3166 pour l'index PAI (tous pays sauf les 11
+                     majeurs).
+                     Exemples : "se" (Suède), "jp" (Japon), "br" (Brésil).
+
+            country_major: Code PAY pour les 11 pays majeurs uniquement :
+                           de be ca es us fr it nl gb ru ch
+                           NE PAS combiner avec `country` pour le même pays.
+
+            year_from: Borne inférieure inclusive sur l'année de publication (APU>=).
+
+            year_to: Borne supérieure inclusive sur l'année de publication (APU<=).
+
+            year_exact: Année de publication exacte (APU=). Écrase year_from/year_to.
+
+        Returns:
+            {
+              "source": "sudoc-sru",    # connecteur qui a répondu
+              "command": "search_sudoc",
+              "total_found": int,       # total dans le Sudoc (peut dépasser returned)
+              "returned": int,          # notices dans cette réponse
+              "error": str | null,      # null en cas de succès
+              "query_used": str,        # requête complète avec limitations
+              "results": [
+                {
+                  "source": "sudoc",
+                  "id": str,            # = ppn, ancre d'identité commune
+                  "url": str,           # = sudoc_url, https://www.sudoc.fr/<ppn>
+                  "ppn": str,           # identifiant Sudoc (lien : sudoc.fr/<ppn>)
+                  "title": str | null,
+                  "authors": list[str], # "Nom, Prénom" — personnes en priorité,
+                                        # collectivités en repli
+                  "personal_authors": list[str],
+                  "corporate_authors": list[str],
+                  "year": int | null,
+                  "publisher": str | null,
+                  "pub_place": str | null,
+                  "language": str | null,   # code ISO 639-2
+                  "isbn": str | null,
+                  "issn": str | null,
+                  "thesis": {           # null si non applicable
+                    "type": str | null,
+                    "discipline": str | null,
+                    "institution": str | null,
+                    "year": str | null
+                  },
+                  "subjects": list[str],    # vedettes RAMEAU / MeSH
+                  "series": str | null,
+                  "physical_desc": str | null,
+                  "notes": list[str] | null,
+                  "urls": list[str] | null,
+                  "sudoc_url": str          # https://www.sudoc.fr/<ppn>
+                }
+              ]
+            }
+        """
+        trace = TRACE_DEFAULT
+        trace_events: list[dict] = []
+
+        # ── Construction des limitations ─────────────────────────────────────────
+        # Chaque limitation est exprimée comme une clause SRU naturelle (non encore
+        # encodée). L'encodage global est appliqué une seule fois par _encode_query.
+        limitations: list[str] = []
+
+        if doc_type:
+            limitations.append(f"tdo={doc_type}")
+
+        # LAN (10 langues majeures) a priorité sur LAI (toutes autres langues).
+        if lang_major:
+            limitations.append(f"lan={lang_major}")
+        elif language:
+            limitations.append(f"lai={language}")
+
+        # PAY (11 pays majeurs) a priorité sur PAI (tous autres pays).
+        if country_major:
+            limitations.append(f"pay={country_major}")
+        elif country:
+            limitations.append(f"pai={country}")
+
+        # Dates : year_exact écrase la plage, la plage utilise le raccourci SRU
+        # (apu=1995-2000) quand les deux bornes sont présentes.
+        if year_exact is not None:
+            limitations.append(f"apu={year_exact}")
+        else:
+            if year_from is not None and year_to is not None:
+                limitations.append(f"apu={year_from}-{year_to}")
+            elif year_from is not None:
+                limitations.append(f"apu=>={year_from}")
+            elif year_to is not None:
+                limitations.append(f"apu=<={year_to}")
+
+        full_query = _apply_limitations(query, limitations)
+        encoded    = _encode_query(full_query)
+
+        # ── Compte total ──────────────────────────────────────────────────────────
+        try:
+            total, t = _get_total(encoded, trace=trace)
+        except (RuntimeError, httpx.HTTPError, ET.ParseError) as e:
+            return _envelope("search_sudoc", error=str(e), query_used=full_query)
+        trace_events.extend(t)
+
+        if total == 0:
+            out = _envelope("search_sudoc", query_used=full_query,
+                            error=f"Aucune notice Sudoc pour : '{full_query}'")
+            if trace:
+                out["trace"] = trace_events
+            return out
+
+        # ── Pagination ────────────────────────────────────────────────────────────
+        to_fetch   = min(max_results, total, 1000)
+        batch_size = min(100, to_fetch)
+        records: list[dict] = []
+
+        for start in range(1, to_fetch + 1, batch_size):
+            this_batch = min(batch_size, to_fetch - len(records))
+            try:
+                page, t = _fetch_page(encoded, start=start, batch=this_batch, trace=trace)
+            except (RuntimeError, httpx.HTTPError, ET.ParseError) as e:
+                # Pagination partielle : on rend ce qui a été collecté, et la cause.
+                out = _envelope("search_sudoc", records, total_found=total,
+                                query_used=full_query, error=str(e))
+                if trace:
+                    out["trace"] = trace_events
+                return out
+            trace_events.extend(t)
+            records.extend(page)
+            if len(records) >= to_fetch:
+                break
+            time.sleep(0.2)  # délai de courtoisie entre pages
+
+        out = _envelope("search_sudoc", records, total_found=total,
+                        query_used=full_query)
+        if trace:
+            out["trace"] = trace_events
+        return out
+
+
+    # ── Tool 2 : lookup_by_ppn ────────────────────────────────────────────────────
+
+    @mcp.tool
+    def lookup_by_ppn(ppn: str) -> dict:
+        """
+        Récupère une notice Sudoc par son PPN (Pica Production Number).
+
+        Le PPN est l'identifiant unique d'une notice dans le catalogue Sudoc.
+        Il figure dans l'URL de la notice : https://www.sudoc.fr/<PPN>
+        Il est également retourné dans le champ `ppn` des résultats de search_sudoc.
+
+        Utiliser cet outil quand on dispose déjà de l'identifiant exact (par exemple
+        après un search_sudoc ou une recherche manuelle sur sudoc.fr).
+
+        Args:
+            ppn: PPN Sudoc, ex. "070685045". Chiffres uniquement, sans espaces.
+
+        Returns:
+            {
+              "source": "sudoc-sru", "command": "lookup_by_ppn",
+              "total_found": 1, "returned": 1, "error": null,
+              "results": [ <notice normalisée — même schéma que search_sudoc> ]
+            }
+            Ou si le PPN n'existe pas :
+            {
+              "source": "sudoc-sru", "command": "lookup_by_ppn",
+              "total_found": 0, "returned": 0, "results": [],
+              "error": "PPN not found in Sudoc: '...'"
+            }
+        """
+        trace = TRACE_DEFAULT
+        encoded = _encode_query(f"ppn={ppn}")
+        url = _build_url(encoded, start_record=1, maximum_records=1)
+        try:
+            root, tevents = _get_xml(url, trace=trace)
+        except (RuntimeError, httpx.HTTPError, ET.ParseError) as e:
+            return _envelope("lookup_by_ppn", error=str(e))
+
+        result: dict | None = None
+        for srw_rec in root.findall(".//srw:record", namespaces=SRU_NS):
+            rd = srw_rec.find("./srw:recordData", namespaces=SRU_NS)
+            if rd is not None:
+                unimarc = _unimarc_root(rd)
+                if unimarc is not None:
+                    result = _format_record(unimarc)
+                    break
+
+        if result:
+            out = _envelope("lookup_by_ppn", [result], total_found=1)
+        else:
+            out = _envelope("lookup_by_ppn",
+                            error=f"PPN not found in Sudoc: '{ppn}'")
+        if trace:
+            out["trace"] = tevents
+        return out
+
+
+    # ── Tool 3 : lookup_by_isbn ───────────────────────────────────────────────────
+
+    @mcp.tool
+    def lookup_by_isbn(isbn: str) -> dict:
+        """
+        Récupère les notices Sudoc correspondant à un ISBN (10 ou 13 chiffres).
+
+        Les tirets sont optionnels : "978-2-07-036024-5" et "9782070360245" donnent
+        le même résultat. Un ISBN peut correspondre à plusieurs notices dans le
+        Sudoc (éditions différentes, support imprimé et électronique, etc.).
+
+        Note : l'index ISB du Sudoc ne couvre que les monographies (livres).
+        Pour les ressources sérielles, utiliser l'index `isn` via search_sudoc.
+
+        Args:
+            isbn: ISBN-10 ou ISBN-13, avec ou sans tirets.
+                  Exemples : "978-2-07-036024-5", "2070360245", "9782070360245"
+
+        Returns:
+            {
+              "source": "sudoc-sru", "command": "lookup_by_isbn",
+              "total_found": int,
+              "returned": int,
+              "error": str | null,
+              "isbn_queried": str,      # ISBN tel que passé en paramètre
+              "results": [ <notices normalisées — même schéma que search_sudoc> ]
+            }
+        """
+        trace = TRACE_DEFAULT
+        clean = isbn.replace("-", "")
+        encoded = _encode_query(f"isb={clean}")
+        url = _build_url(encoded, start_record=1, maximum_records=10)
+        try:
+            root, tevents = _get_xml(url, trace=trace)
+        except (RuntimeError, httpx.HTTPError, ET.ParseError) as e:
+            return _envelope("lookup_by_isbn", error=str(e), isbn_queried=isbn)
+
+        count_el = root.find(".//srw:numberOfRecords", namespaces=SRU_NS)
+        total    = int(count_el.text) if count_el is not None and count_el.text else 0
+
+        records: list[dict] = []
+        for srw_rec in root.findall(".//srw:record", namespaces=SRU_NS):
+            rd = srw_rec.find("./srw:recordData", namespaces=SRU_NS)
+            if rd is not None:
+                unimarc = _unimarc_root(rd)
+                if unimarc is not None:
+                    records.append(_format_record(unimarc))
+
+        out = _envelope(
+            "lookup_by_isbn", records,
+            total_found=total,
+            isbn_queried=isbn,
+            error=None if records else f"Aucune notice Sudoc pour l'ISBN '{isbn}'",
+        )
+        if trace:
+            out["trace"] = tevents
+        return out
+
+
+    # ── Tool 4 : count_records ────────────────────────────────────────────────────
+
+    @mcp.tool
+    def count_records(query: str) -> dict:
+        """
+        Retourne le nombre total de notices correspondant à une requête SRU,
+        sans rapatrier les données (une seule requête HTTP, maximumRecords=1).
+
+        Utiliser cet outil pour :
+        - Estimer la taille d'un corpus avant un search_sudoc avec max_results élevé.
+        - Valider qu'une requête donne des résultats avant de la construire
+          davantage.
+        - Comparer la couverture de différentes stratégies de recherche.
+
+        Accepte la même syntaxe de requête que search_sudoc (même index,
+        mêmes opérateurs, même troncature). Les limitations (TDO, LAN, APU…)
+        doivent être incluses manuellement dans `query` si nécessaire :
+        ex. "edi=gallimard and tdo=b and lan=fre"
+
+        Args:
+            query: Requête SRU en syntaxe naturelle.
+                   Exemples :
+                   "aut=zola"
+                   "pcp=pcmed and tdo=t"
+                   "edi=gallimard and lan=fre and apu=2000-2023"
+                   "nth=toulouse and mti=intelligence artificielle and tdo=y"
+
+        Returns:
+            {
+              "source": "sudoc-sru", "command": "count_records",
+              "total_found": int,   # nombre total de notices correspondantes
+              "returned":    0,     # cet outil ne rapatrie aucune notice
+              "results":     [],    # toujours un tableau, ici toujours vide
+              "error":       str | null,
+              "query":       str,   # requête passée en entrée
+              "url_used":    str    # URL SRU effectivement exécutée (debug)
+            }
+        """
+        trace = TRACE_DEFAULT
+        encoded  = _encode_query(query)
+        url      = _build_url(encoded, start_record=1, maximum_records=1)
+        try:
+            root, tevents = _get_xml(url, trace=trace)
+        except (RuntimeError, httpx.HTTPError, ET.ParseError) as e:
+            return _envelope("count_records", error=str(e), query=query, url_used=url)
+
+        el    = root.find(".//srw:numberOfRecords", namespaces=SRU_NS)
+        total = int(el.text) if el is not None and el.text else 0
+
+        out = _envelope("count_records", total_found=total, query=query, url_used=url)
+        if trace:
+            out["trace"] = tevents
+        return out
+
+
+    # ── Tool 5 : scan_index ───────────────────────────────────────────────────────
+
+    @mcp.tool
+    def scan_index(
+        index_key: str,
+        term: str,
+        maximum_terms: int = 25,
+        response_position: int = 1,
+    ) -> dict:
+        """
+        Explore un index Sudoc par ordre alphabétique à partir d'un terme donné
+        (opération SRU `scan`).
+
+        Utilisations typiques :
+        - Découvrir les formes normalisées d'un terme dans un index phrase
+          (per, org, vma, tco) avant d'écrire une requête exacte.
+        - Vérifier qu'un terme existe dans un index et voir ses variantes.
+        - Comprendre pourquoi une requête renvoie zéro résultat (le terme
+          est peut-être orthographié différemment dans le catalogue).
+        - Obtenir les effectifs (nombre de notices) pour chaque terme.
+
+        Exemples d'utilisation :
+          index_key="mti", term="paralogue"    → termes titre autour de "paralogue"
+          index_key="aut", term="lagerlof"     → variantes du nom "lagerlof"
+          index_key="vma", term="abricot"      → vedettes RAMEAU débutant par "abricot"
+          index_key="per", term="eco,u"        → noms de personne "Eco, U..."
+          index_key="org", term="insee"        → formes normalisées des collectivités "INSEE"
+          index_key="edi", term="gallimard"    → éditeurs "gallimard..."
+
+        Index disponibles (voir search_sudoc pour la liste complète) :
+          mti aut per org msu vma fgr msa mee nth res lva fir rec
+          rbc pcp rpc cot tou edi col tab tco sou
+
+        Args:
+            index_key: Clé d'index Sudoc (ex. "mti", "aut", "vma", "per").
+
+            term: Terme de départ pour le balayage alphabétique.
+                  Pour les index phrase (per, org, vma), passer la forme partielle :
+                  ex. "eco,u" pour explorer les auteurs "Eco, U...".
+
+            maximum_terms: Nombre de termes à retourner (défaut 25, minimum 1).
+                           Le serveur utilise 10 par défaut si ce paramètre est omis.
+
+            response_position: Position du terme `term` dans la liste retournée
+                               (défaut 1 = premier élément). Utiliser 5 pour avoir
+                               deux termes avant et plusieurs après.
+
+        Returns:
+            {
+              "source": "sudoc-sru", "command": "scan_index",
+              "total_found": int,         # nombre de termes retournés
+              "returned":    int,
+              "error":       str | null,
+              "index":       str,         # clé d'index interrogée
+              "start_term":  str,         # terme de départ
+              "results": [                # un élément par terme de l'index
+                {
+                  "term":  str | null,    # forme normalisée dans le catalogue
+                  "count": int | null     # nombre de notices pour ce terme
+                },
+                ...
+              ]
+            }
+        """
+        trace = TRACE_DEFAULT
+        scan_clause = f"{index_key}%3D{term}"
+        url = (
+            f"{SRU_BASE_URL}?operation=scan&version=1.1"
+            f"&scanClause={scan_clause}"
+            f"&responsePosition={response_position}"
+            f"&maximumTerms={maximum_terms}"
+        )
+        try:
+            root, tevents = _get_xml(url, trace=trace)
+        except (RuntimeError, httpx.HTTPError, ET.ParseError) as e:
+            return _envelope("scan_index", error=str(e),
+                             index=index_key, start_term=term)
+
+        terms: list[dict] = []
+        for term_el in root.findall(".//{http://www.loc.gov/zing/srw/}term"):
+            value_el = term_el.find("{http://www.loc.gov/zing/srw/}value")
+            display_el = term_el.find("{http://www.loc.gov/zing/srw/}displayTerm")
+            count_el = term_el.find("{http://www.loc.gov/zing/srw/}numberOfRecords")
+            # L'Abes laisse <srw:value> vide et place la forme indexée dans
+            # <srw:displayTerm> : lire les deux, sinon `term` est toujours null.
+            value = (value_el.text or "").strip() if value_el is not None else ""
+            display = (display_el.text or "").strip() if display_el is not None else ""
+            terms.append({
+                "term":  value or display or None,
+                "count": int(count_el.text) if count_el is not None and count_el.text else None,
+            })
+
+        out = _envelope("scan_index", terms, total_found=len(terms),
+                        index=index_key, start_term=term)
+        if trace:
+            out["trace"] = tevents
+        return out
+
+
+    # ══════════════════════════════════════════════════════════════════════════════
+    # SECTION : entrypoint
+    # ══════════════════════════════════════════════════════════════════════════════
+
+    return mcp
+
+
+@app.function(secrets=SECRETS)
+@modal.concurrent(max_inputs=100)
+@modal.asgi_app()
+def web():
+    """Web gateway for the MCP server."""
+    from fastapi import FastAPI
+
+    mcp = make_mcp_server()
+    mcp_app = mcp.http_app(transport="streamable-http", stateless_http=True)
+
+    # The MCP app owns a lifespan (session-manager startup); mounting it under a
+    # FastAPI parent drops that lifespan unless it is handed over explicitly.
+    fastapi_app = FastAPI(lifespan=mcp_app.router.lifespan_context)
+    fastapi_app.mount("/", mcp_app, "mcp")
+
+    return fastapi_app
+
+
+@app.function(secrets=SECRETS)
+async def test_tool(tool_name: str | None = None, arguments: str | None = None):
+    """List the tools this deployment serves, and optionally call one.
+
+        uvx modal run mcp/sudoc-sru/modal/mcp_server_stateless.py::test_tool
+
+    Args:
+        tool_name: Tool to call. Only the listing runs when omitted.
+        arguments: JSON object of arguments for that tool. Defaults to `{}`.
+    """
+    import json
+
+    from fastmcp import Client
+    from fastmcp.client.transports import StreamableHttpTransport
+
+    # `.aio()`: the blocking accessor warns when called from a coroutine.
+    url = await web.get_web_url.aio()
+    client = Client(StreamableHttpTransport(url=f"{url}/mcp/"))
+
+    async with client:
+        tools = await client.list_tools()
+        for tool in tools:
+            print(tool.name)
+
+        if tool_name is None:
+            return
+        if tool_name not in {tool.name for tool in tools}:
+            raise Exception(f"could not find tool {tool_name}")
+
+        result = await client.call_tool(
+            tool_name, json.loads(arguments) if arguments else {}
+        )
+        print(result.data)

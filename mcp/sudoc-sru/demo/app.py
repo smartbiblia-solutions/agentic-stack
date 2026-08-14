@@ -2,6 +2,10 @@
 """
 Standalone Gradio demo of the sudoc-sru MCP server, deployable as a Hugging Face Space.
 
+The five tools mirror the canonical `mcp_server.py` — same names, same
+arguments, same envelope. The only deliberate narrowing is `max_results`,
+clamped to 10 instead of 100.
+
 Local run:
     uv run --with 'gradio[mcp]>=6,<7' --with httpx app.py
 
@@ -324,6 +328,136 @@ def lookup_by_ppn(ppn: str) -> dict:
     return out
 
 
+def lookup_by_isbn(isbn: str) -> dict:
+    """
+    Fetch the Sudoc records carrying a given ISBN. One ISBN can match several records.
+
+    Hyphens are optional: "978-2-07-041311-9" and "9782070413119" behave the same. The Sudoc `isb` index covers monographs only; for serials, query the `isn` index through search_sudoc.
+
+    Args:
+        isbn: ISBN-10 or ISBN-13, with or without hyphens, e.g. "978-2-02-023812-0", "2707329673".
+
+    Returns:
+        {"source": "sudoc-sru", "command": "lookup_by_isbn", "total_found": int, "returned": int, "isbn_queried": str, "results": [<same record shape as search_sudoc>], "error": str | null}
+    """
+    out: dict = {"source": "sudoc-sru", "command": "lookup_by_isbn",
+                 "total_found": 0, "returned": 0, "isbn_queried": isbn,
+                 "results": [], "error": None}
+
+    clean = (isbn or "").replace("-", "").strip()
+    if not clean:
+        out["error"] = "isbn is required"
+        return out
+
+    encoded = _encode_query(f"isb={clean}")
+    root, error = _get_xml(_build_url(encoded, start_record=1, maximum_records=MAX_RESULTS))
+    if error:
+        out["error"] = error
+        return out
+
+    el = root.find(".//srw:numberOfRecords", namespaces=SRU_NS)
+    out["total_found"] = int(el.text) if el is not None and el.text else 0
+    out["results"] = _records_from(root)
+    out["returned"] = len(out["results"])
+    if not out["results"]:
+        out["error"] = f"Aucune notice Sudoc pour l'ISBN '{isbn}'"
+    return out
+
+
+def count_records(query: str) -> dict:
+    """
+    Count the Sudoc records matching an SRU query without fetching any of them.
+
+    One HTTP call with maximumRecords=1. Use it to size a corpus before a large search_sudoc, or to check that a query matches anything before refining it. Same query syntax as search_sudoc — limitations such as tdo, lan or apu must be written into `query` yourself, e.g. "edi=gallimard and lan=fre".
+
+    Args:
+        query: SRU query, e.g. "aut=zola and tdo=b", "nth=toulouse and tdo=y".
+
+    Returns:
+        {"source": "sudoc-sru", "command": "count_records", "total_found": int, "returned": 0, "results": [], "query": str, "url_used": str, "error": str | null}
+    """
+    out: dict = {"source": "sudoc-sru", "command": "count_records",
+                 "total_found": 0, "returned": 0, "results": [],
+                 "query": query, "url_used": None, "error": None}
+
+    if not (query or "").strip():
+        out["error"] = "query is required"
+        return out
+
+    url = _build_url(_encode_query(query), start_record=1, maximum_records=1)
+    out["url_used"] = url
+    root, error = _get_xml(url)
+    if error:
+        out["error"] = error
+        return out
+
+    el = root.find(".//srw:numberOfRecords", namespaces=SRU_NS)
+    out["total_found"] = int(el.text) if el is not None and el.text else 0
+    return out
+
+
+def scan_index(
+    index_key: str,
+    term: str,
+    maximum_terms: int = 25,
+    response_position: int = 1,
+) -> dict:
+    """
+    Browse a Sudoc index alphabetically from a starting term (SRU `scan` operation).
+
+    Use it to discover the normalized form of a term before writing an exact query, to see its variants, to understand why a query returns nothing, or to read the record count behind each term. Indexes: mti aut per org msu vma fgr msa mee nth res lva fir rec rbc pcp rpc cot tou edi col tab tco sou.
+
+    Args:
+        index_key: Sudoc index key, e.g. "edi", "aut", "vma", "per".
+        term: Starting term. For phrase indexes (per, org, vma) pass the partial form, e.g. "eco,u" to browse authors "Eco, U...".
+        maximum_terms: Number of terms to return, 1-50 on this demo endpoint.
+        response_position: Position of `term` in the returned list, 1 = first. Use 5 to get a few terms before it.
+
+    Returns:
+        {"source": "sudoc-sru", "command": "scan_index", "total_found": int, "returned": int, "index": str, "start_term": str, "results": [{"term": str | null, "count": int | null}], "error": str | null}
+    """
+    out: dict = {"source": "sudoc-sru", "command": "scan_index",
+                 "total_found": 0, "returned": 0, "index": index_key,
+                 "start_term": term, "results": [], "error": None}
+
+    if not (index_key or "").strip() or not (term or "").strip():
+        out["error"] = "index_key and term are both required"
+        return out
+
+    wanted = max(1, min(int(maximum_terms or 25), 50))
+    url = (
+        f"{SRU_BASE_URL}?operation=scan&version=1.1"
+        f"&scanClause={index_key.strip()}%3D{term.strip()}"
+        f"&responsePosition={max(1, int(response_position or 1))}"
+        f"&maximumTerms={wanted}"
+    )
+    root, error = _get_xml(url)
+    if error:
+        out["error"] = error
+        return out
+
+    terms: list[dict] = []
+    for term_el in root.findall(".//srw:term", namespaces=SRU_NS):
+        value_el = term_el.find("srw:value", namespaces=SRU_NS)
+        display_el = term_el.find("srw:displayTerm", namespaces=SRU_NS)
+        count_el = term_el.find("srw:numberOfRecords", namespaces=SRU_NS)
+        # Abes leaves <srw:value> empty and puts the indexed form in
+        # <srw:displayTerm>; read both so the term is never null.
+        value = (value_el.text or "").strip() if value_el is not None else ""
+        display = (display_el.text or "").strip() if display_el is not None else ""
+        terms.append({
+            "term": value or display or None,
+            "count": int(count_el.text) if count_el is not None and count_el.text else None,
+        })
+
+    out["results"] = terms
+    out["returned"] = len(terms)
+    out["total_found"] = len(terms)
+    if not terms:
+        out["error"] = f"Aucun terme dans l'index '{index_key}' à partir de '{term}'"
+    return out
+
+
 # ── Presentation ──────────────────────────────────────────────────────────────
 
 
@@ -352,6 +486,37 @@ def _render_records(payload: dict) -> str:
     return "\n".join(lines)
 
 
+def _render_count(payload: dict) -> str:
+    return (
+        f"**{payload.get('total_found', 0)} notices** correspondent à "
+        f"`{payload.get('query')}`.\n\n"
+        "_Aucune notice n'a été rapatriée : une seule requête HTTP, "
+        "`maximumRecords=1`._"
+    )
+
+
+def _render_terms(payload: dict) -> str:
+    results = payload.get("results") or []
+    if not results:
+        return "_Aucun terme dans cet index._"
+    lines = [
+        f"**{payload.get('returned', len(results))} termes de l'index "
+        f"`{payload.get('index')}` à partir de « {payload.get('start_term')} »**",
+        "",
+        "| Terme normalisé | Notices |",
+        "|---|---|",
+    ]
+    for t in results:
+        lines.append(
+            "| {term} | {count} |".format(
+                term=(t.get("term") or "—").replace("|", "\\|"),
+                count=t.get("count") if t.get("count") is not None else "—",
+            )
+        )
+    lines += ["", "_Reprenez un terme tel quel dans une requête `index=terme`._"]
+    return "\n".join(lines)
+
+
 def _run_search(query, max_results, doc_type, year_from, year_to):
     payload = search_sudoc(query, max_results, doc_type or None,
                            int(year_from) if year_from else None,
@@ -366,6 +531,27 @@ def _run_lookup(ppn):
     if payload.get("error"):
         raise gr.Error(payload["error"])
     return _render_records(payload), payload
+
+
+def _run_isbn(isbn):
+    payload = lookup_by_isbn(isbn)
+    if payload.get("error"):
+        raise gr.Error(payload["error"])
+    return _render_records(payload), payload
+
+
+def _run_count(query):
+    payload = count_records(query)
+    if payload.get("error"):
+        raise gr.Error(payload["error"])
+    return _render_count(payload), payload
+
+
+def _run_scan(index_key, term, maximum_terms, response_position):
+    payload = scan_index(index_key, term, int(maximum_terms), int(response_position))
+    if payload.get("error"):
+        raise gr.Error(payload["error"])
+    return _render_terms(payload), payload
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
@@ -406,10 +592,13 @@ with gr.Blocks(title="Sudoc MCP demo") as demo:
         gr.Examples(
             examples=[
                 ["mti=jardins and japonais", 5, "", None, None],
-                ["mti=zzzqwx and introuvable", 3, "", None, None],
+                ["mti=intelligence artificielle", 5, "", 2020, 2024],
+                ["aut=lagerlof", 5, "b", None, None],
+                ["nth=toulouse", 5, "y", None, None],
+                ['tou="ocre jaune"', 5, "", None, None],
             ],
             inputs=[query, max_results, doc_type, year_from, year_to],
-            label="Une recherche qui trouve, une qui ne trouve rien",
+            label="Titre, titre borné dans le temps, auteur limité aux imprimés, thèses, expression exacte",
         )
         search_btn.click(
             _run_search,
@@ -425,17 +614,82 @@ with gr.Blocks(title="Sudoc MCP demo") as demo:
         lookup_raw = gr.JSON(label="Raw tool output")
 
         gr.Examples(
-            examples=[["070685045"], ["000000000"]],
+            examples=[["070685045"], ["190477008"], ["077317688"]],
             inputs=[ppn],
-            label="Un PPN existant, un PPN inconnu",
+            label="Une monographie, un autre imprimé, une thèse",
         )
         lookup_btn.click(
             _run_lookup, inputs=[ppn], outputs=[lookup_out, lookup_raw], api_name=False
         )
 
+    with gr.Tab("Notice par ISBN"):
+        isbn = gr.Textbox(label="ISBN (tirets facultatifs)", placeholder="978-2-02-023812-0")
+        isbn_btn = gr.Button("Récupérer", variant="primary")
+        isbn_out = gr.Markdown()
+        isbn_raw = gr.JSON(label="Raw tool output")
+
+        gr.Examples(
+            examples=[["978-2-02-023812-0"], ["9782070413119"], ["2707329673"]],
+            inputs=[isbn],
+            label="ISBN-13 avec tirets, ISBN-13 collé, ISBN-10",
+        )
+        isbn_btn.click(
+            _run_isbn, inputs=[isbn], outputs=[isbn_out, isbn_raw], api_name=False
+        )
+
+    with gr.Tab("Compter"):
+        count_query = gr.Textbox(label="Requête SRU", placeholder="aut=zola and tdo=b")
+        count_btn = gr.Button("Compter", variant="primary")
+        count_out = gr.Markdown()
+        count_raw = gr.JSON(label="Raw tool output")
+
+        gr.Examples(
+            examples=[
+                ["aut=zola and tdo=b"],
+                ["edi=gallimard and lan=fre"],
+                ["nth=toulouse and tdo=y"],
+                ["mti=intelligence artificielle and apu=2020-2024"],
+            ],
+            inputs=[count_query],
+            label="Auteur, éditeur et langue, thèses, titre borné dans le temps",
+        )
+        count_btn.click(
+            _run_count, inputs=[count_query], outputs=[count_out, count_raw], api_name=False
+        )
+
+    with gr.Tab("Explorer un index"):
+        index_key = gr.Textbox(label="Index", value="edi", placeholder="edi")
+        scan_term = gr.Textbox(label="Terme de départ", value="gallimard")
+        with gr.Row():
+            maximum_terms = gr.Slider(1, 50, value=15, step=1, label="Termes")
+            response_position = gr.Slider(1, 10, value=1, step=1, label="Position du terme")
+        scan_btn = gr.Button("Explorer", variant="primary")
+        scan_out = gr.Markdown()
+        scan_raw = gr.JSON(label="Raw tool output")
+
+        gr.Examples(
+            examples=[
+                ["edi", "gallimard", 15, 1],
+                ["aut", "lagerlof", 15, 1],
+                ["per", "eco,u", 15, 1],
+                ["vma", "abricot", 15, 5],
+            ],
+            inputs=[index_key, scan_term, maximum_terms, response_position],
+            label="Éditeurs, auteurs, index phrase, et un balayage recentré sur le terme",
+        )
+        scan_btn.click(
+            _run_scan,
+            inputs=[index_key, scan_term, maximum_terms, response_position],
+            outputs=[scan_out, scan_raw],
+            api_name=False,
+        )
+
     # The only declared MCP tools. Names match the canonical server's.
     gr.api(search_sudoc, api_name="search_sudoc")
     gr.api(lookup_by_ppn, api_name="lookup_by_ppn")
+    gr.api(lookup_by_isbn, api_name="lookup_by_isbn")
+    gr.api(count_records, api_name="count_records")
+    gr.api(scan_index, api_name="scan_index")
 
 
 if __name__ == "__main__":

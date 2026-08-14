@@ -19,8 +19,9 @@ clues (affiliation, discipline, titles), with a confidence score and the right
 to abstain.
 
 The **canonical MCP endpoint is `mcp_server.py`** one folder up, with no
-tightened candidate limit. This app exposes `align_person` at
-`/gradio_api/mcp/sse`; that endpoint is demo-grade and secondary. Set
+tightened candidate limit. The server has exactly one tool, and this app exposes
+that same `align_person` at
+`/gradio_api/mcp/`; that endpoint is demo-grade and secondary. Set
 `GRADIO_MCP_SERVER=false` wherever the real server is reachable, so clients
 cannot bind to the wrong one.
 
@@ -28,8 +29,12 @@ cannot bind to the wrong one.
 
 `app.py` imports nothing from the parent folder, this folder is the Space root,
 so `mcp_server.py` does not exist here. The tool is a **hand-kept copy** of the
-canonical one: same name, same argument names and types, same response shape
-including `error`. **Change one, change the other.**
+canonical one — the server has no second tool, so the surfaces match tool for
+tool: same name, same argument names and types, same response shape including
+`error`. **Change one, change the other.**
+
+Two deliberate narrowings, documented in the docstring: `max_candidates` is
+clamped to 30 instead of 100, and `max_returned_candidates` to 10 instead of 20.
 
 ## Reading the verdict
 
@@ -81,7 +86,7 @@ Add the following configuration to your MCP config
 ```
 {
   "mcpServers": {
-    "primo": {
+    "idref-resolver-api": {
       "url": "http://localhost:7860/gradio_api/mcp/"
     }
   }

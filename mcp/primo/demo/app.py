@@ -775,10 +775,14 @@ with gr.Blocks(title="Primo MCP demo") as demo:
         gr.Examples(
             examples=[
                 ["histoire de la lecture", "any", 5, "books"],
-                ["qzxwv titre inexistant", "title", 3, ""],
+                ["histoire de la lecture", "title", 5, ""],
+                ["Chartier, Roger", "creator", 5, ""],
+                ["book history", "sub", 5, "journals"],
+                ["open access", "any", 10, "articles"],
             ],
             inputs=[query, field, max_results, resource_type],
-            label="A hit, and a query that returns nothing",
+            label="Keyword on books, the same words as a title, an author, a subject "
+                  "on journals, then articles — each a different index",
         )
         search_btn.click(
             _run_search,
@@ -791,6 +795,12 @@ with gr.Blocks(title="Primo MCP demo") as demo:
         )
 
     with gr.Tab("Fetch a record"):
+        gr.Markdown(
+            "Record ids are institution-specific: copy one from the `id` field of "
+            "a search result above. A local holding starts with `alma` and is read "
+            "with context `L`; a Central Discovery Index record starts with `cdi_` "
+            "and needs context `PC`."
+        )
         record_id = gr.Textbox(label="Record id", placeholder="alma990001234")
         context = gr.Radio(["L", "PC"], value="L", label="Context (L = local, PC = CDI)")
         record_btn = gr.Button("Fetch", variant="primary")
@@ -800,9 +810,10 @@ with gr.Blocks(title="Primo MCP demo") as demo:
             record_req = gr.JSON()
 
         gr.Examples(
-            examples=[["alma990001234", "L"], ["does-not-exist", "L"]],
+            examples=[["alma990001234", "L"], ["cdi_proquest_journals_1234567890", "PC"]],
             inputs=[record_id, context],
-            label="A record id from a search above, and one that does not resolve",
+            label="The two id shapes, each with the context that resolves it — "
+                  "replace them with ids from your own search above",
         )
         record_btn.click(
             _run_record,

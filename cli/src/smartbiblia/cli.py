@@ -99,6 +99,22 @@ def _canonical(meta: dict, alias: str) -> str:
     return meta.get("name", alias)
 
 
+def _is_ambiguous(catalog: dict, alias: str, meta: dict) -> bool:
+    """Vrai si ce nom désigne à la fois une skill et un serveur MCP.
+
+    `_resolve` accepte l'alias ET le nom canonique : les deux formes comptent,
+    sans quoi `openalex` (alias skill, nom canonique MCP) passerait pour
+    univoque alors que la CLI refuse de trancher.
+    """
+    names = {alias, meta.get("name", alias)}
+    kinds = {
+        k
+        for k, other_alias, other_meta in _entries(catalog)
+        if names & {other_alias, other_meta.get("name", other_alias)}
+    }
+    return len(kinds) > 1
+
+
 def _default_dest(kind: str, dest: Optional[Path], claude: bool) -> Path:
     if dest is not None:
         return dest
@@ -128,6 +144,7 @@ def _frontmatter_name(skill_md: Path) -> Optional[str]:
 def list_cmd(
     kind: Annotated[Optional[str], typer.Option("--kind", "-k", help="skill | mcp")] = None,
     tag: Annotated[Optional[str], typer.Option("--tag", "-t", help="Filtrer par tag")] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Sortie JSON, pour lecture machine")] = False,
 ):
     """Liste les skills et serveurs MCP disponibles."""
     if kind and kind not in ("skill", "mcp"):
@@ -135,6 +152,33 @@ def list_cmd(
         raise typer.Exit(1)
 
     catalog = _load_catalog()
+
+    if as_json:
+        entries = [
+            {
+                "kind": k,
+                "alias": alias,
+                "name": _canonical(meta, alias),
+                "ambiguous": _is_ambiguous(catalog, alias, meta),
+                **{key: value for key, value in meta.items() if key != "name"},
+            }
+            for k, alias, meta in _entries(catalog, kind)
+            if not tag or tag in meta.get("tags", [])
+        ]
+        # typer.echo() et non console.print() : Rich reformate et tronque le JSON.
+        payload = json.dumps(
+            {
+                "catalog_version": catalog.get("catalog_version"),
+                "source": repo_url(),
+                "branch": BRANCH,
+                "returned": len(entries),
+                "entries": entries,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        typer.echo(payload)
+        return
 
     table = Table(title=f"smartbiblia — catalogue ({repo_url()})", highlight=True)
     table.add_column("Type", style="magenta", no_wrap=True)
