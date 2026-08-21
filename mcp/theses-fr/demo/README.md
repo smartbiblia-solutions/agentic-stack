@@ -32,13 +32,7 @@ is reachable, so clients cannot bind to the wrong one.
 | `list_facets` | The exact facet labels a query accepts, with counts |
 | `search_by_organisme` | An organisation's theses, grouped by its role |
 
-## It is standalone
-
-`app.py` imports nothing from the parent folder, because this folder is the
-Space root and `mcp_server.py` does not exist here. The five tools are a
-**hand-kept copy** of the canonical ones — the server has no sixth tool, so the
-surfaces match tool for tool: same names, same argument names and types, same
-response shape including `error`. **Change one, change the other.**
+## Deliberate narrowings
 
 Deliberate narrowings, documented in the tool docstrings: `max_results` is
 clamped to 10 instead of 200, and `search_by_organisme`'s `role` is a plain `str`

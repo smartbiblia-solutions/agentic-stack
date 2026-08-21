@@ -5,8 +5,7 @@ Deploy the server as a serverless HTTPS endpoint on [Modal](https://modal.com).
 `mcp_server_stateless.py` is a **standalone duplicate** of the canonical
 `../mcp_server.py`, in the shape of
 [Modal's own FastMCP example](https://modal.com/docs/examples/mcp_server_stateless):
-it mounts nothing into the image and imports nothing from the parent folder. The
-whole server is built inside `make_mcp_server()`, runtime imports included —
+The whole server is built inside `make_mcp_server()`, runtime imports included.
 Modal loads this file on your machine to build the app, and `fastmcp` and `httpx`
 are not installed there. It serves the same tools, under the same names, with the
 same envelope:

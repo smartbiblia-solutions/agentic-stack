@@ -2,16 +2,14 @@
 
 CLI d'installation des **skills** et **serveurs MCP**
 [smartbiblia](https://github.com/smartbiblia-solutions/agentic-stack) dans un
-workspace agent (Claude Code, Claude Desktop, Codex, OpenClaw, Hermes…).
+workspace agent (Claude Code, Claude Desktop, Codex, OpenClaw, Hermes, PI …).
 
 La CLI ne contient aucune copie des skills : elle lit le catalogue sur GitHub à
-chaque appel et télécharge le dossier demandé. Le package reste minuscule, et
-une skill corrigée est disponible sans republier la CLI.
+chaque appel et télécharge le dossier demandé.
 
 ## Installation
 
-Rien à installer de façon permanente — [`uvx`](https://docs.astral.sh/uv/)
-exécute directement depuis PyPI :
+[`uvx`](https://docs.astral.sh/uv/) exécute directement depuis PyPI :
 
 ```bash
 uvx smartbiblia list
@@ -33,9 +31,7 @@ smartbiblia list
 
 **Alias et nom canonique.** En ligne de commande on écrit l'alias court
 (`sudoc`), mais l'installation crée le dossier sous le nom canonique
-(`search-records-sudoc`). C'est délibéré : un runtime d'agent apparie le nom du
-dossier et le champ `name` du frontmatter, et un dossier mal nommé peut ne pas
-être chargé. Les deux formes sont acceptées en argument.
+(`search-records-sudoc`). Les deux formes sont acceptées en argument.
 
 ## Référence des commandes
 
@@ -73,8 +69,7 @@ smartbiblia list --kind mcp
 smartbiblia list --tag french --json
 ```
 
-La table Rich se replie mal en dessous de ~120 colonnes : **pour un agent ou un
-script, utilisez `--json`.** La sortie JSON a cette forme :
+La sortie JSON a cette forme :
 
 ```json
 {
@@ -110,7 +105,7 @@ smartbiblia info <nom> [--kind skill|mcp]
 
 Affiche description, nom canonique, maturité, tags, chemin dans le dépôt et la
 commande d'installation. Pour un serveur MCP, ajoute l'entrypoint, le port et
-les variables d'environnement — les obligatoires marquées d'une astérisque.
+les variables d'environnement.
 
 ```bash
 smartbiblia info sudoc
@@ -154,7 +149,7 @@ smartbiblia update <nom> [--dest <path>] [--claude] [--kind skill|mcp]
 
 Équivaut à `add --force`. **Le dossier est vidé avant réécriture** : un fichier
 supprimé en amont (un vieux prompt, un schéma renommé) ne survit pas à la mise
-à jour — et une modification locale non plus.
+à jour, de même pour une modification locale.
 
 ### `remove`
 
@@ -175,7 +170,7 @@ smartbiblia mcp-config <nom> [--transport stdio|http] [--dest <path>] [--remote]
 |---|---|---|---|
 | `--transport` | `-t` | `stdio` | `stdio` ou `http`. Toute autre valeur : sortie 1 |
 | `--dest` | `-d` | `./mcp` | Dossier parent d'installation, pour calculer le chemin absolu du script |
-| `--remote` | — | `false` | Pointe l'URL brute GitHub au lieu d'un chemin local — aucune installation requise |
+| `--remote` | — | `false` | Pointe l'URL brute GitHub au lieu d'un chemin local, aucune installation requise |
 
 ```bash
 smartbiblia mcp-config openalex                    # bloc stdio, script local
@@ -187,41 +182,21 @@ smartbiblia mcp-config sudoc-sru --remote          # exécution depuis GitHub
 même pour `openalex` ou `hal`.
 
 La sortie est un bloc `mcpServers` à **fusionner** dans la configuration du
-client (Claude Desktop, Claude Code, Codex…) — ce fichier contient d'autres
-serveurs. Les variables d'environnement attendues sont pré-remplies à vide : la
-CLI n'écrit jamais de clé.
-
-### `version`
-
-```bash
-smartbiblia version
-```
-
-Version de la CLI, dépôt et branche du catalogue effectivement lus.
-
-## Variables d'environnement de la CLI
-
-| Variable | Effet |
-|---|---|
-| `SMARTBIBLIA_GITHUB_TOKEN` | Jeton GitHub optionnel : relève la limite de 60 requêtes/heure de l'API anonyme |
-| `SMARTBIBLIA_BRANCH` | Branche source du catalogue (défaut `main`) — utile pour tester une branche |
-| `SMARTBIBLIA_GITHUB_ORG` / `SMARTBIBLIA_GITHUB_REPO` | Pointer la CLI sur un fork |
+client (Claude Desktop, Claude Code, Codex…) quand ce fichier contient d'autres
+serveurs. Les variables d'environnement attendues sont pré-remplies à vide.
 
 ## Configuration des skills installées
 
-La plupart des skills fonctionnent sans configuration : les valeurs par défaut
+La plupart des skills fonctionnent sans configuration et les valeurs par défaut
 sont dans `cli.py`. Quand un `scripts/.env.example` est présent, copiez-le en
 `scripts/.env` et ajustez. Une clé d'API n'est requise que pour les skills qui
-la déclarent — `smartbiblia info <nom>` le dit.
+la déclarent dans `smartbiblia info <nom>`.
 
 ## Voir aussi
-
-Cette page documente les commandes ; le contenu du catalogue est décrit ailleurs.
 
 | Document | Contenu |
 |---|---|
 | [`../README.md`](../README.md) | Le dépôt, la liste des skills, les conventions communes *(en)* |
-| [`../mcp/README.md`](../mcp/README.md) | Les six serveurs MCP, leurs outils et leurs ports *(en)* |
-| [`../INSTALL_FOR_AGENTS.md`](../INSTALL_FOR_AGENTS.md) | Le runbook d'installation, écrit pour être exécuté par un agent *(en)* |
+| [`../mcp/README.md`](../mcp/README.md) | Les serveurs MCP avec leus instructions d'installation *(en)* |
+| [`../INSTALL_FOR_AGENTS.md`](../INSTALL_FOR_AGENTS.md) | Le runbook d'installation, pour être exécuté par un agent *(en)* |
 | `../skills/<skill>/SKILL.md` | Ce que fait une skill, quand l'utiliser, ce qu'elle renvoie |
-| [`DEPLOYMENT.md`](DEPLOYMENT.md) | Publier une nouvelle version de la CLI sur PyPI |

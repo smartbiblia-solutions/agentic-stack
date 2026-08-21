@@ -25,13 +25,7 @@ that same `align_person` at
 `GRADIO_MCP_SERVER=false` wherever the real server is reachable, so clients
 cannot bind to the wrong one.
 
-## It is standalone
-
-`app.py` imports nothing from the parent folder, this folder is the Space root,
-so `mcp_server.py` does not exist here. The tool is a **hand-kept copy** of the
-canonical one — the server has no second tool, so the surfaces match tool for
-tool: same name, same argument names and types, same response shape including
-`error`. **Change one, change the other.**
+## Deliberate narrowings
 
 Two deliberate narrowings, documented in the docstring: `max_candidates` is
 clamped to 30 instead of 100, and `max_returned_candidates` to 10 instead of 20.

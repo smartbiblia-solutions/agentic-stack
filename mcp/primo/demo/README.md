@@ -23,15 +23,9 @@ both — `search_catalog` and `get_record` — at `/gradio_api/mcp/`; that endpo
 is demo-grade and secondary. Set `GRADIO_MCP_SERVER=false` wherever the real
 server is reachable, so clients cannot bind to the wrong one.
 
-## It is standalone
+## Deliberate narrowings
 
-`app.py` imports nothing from the parent folder, this folder is the Space root,
-so `mcp_server.py` does not exist here. The two tools are a **hand-kept copy** of
-the canonical ones — the server has no third tool, so the surfaces match tool for
-tool: same names, same argument names and types, same record shape including
-`error`. **Change one, change the other.**
-
-Both tools carry the canonical signature in full — every facet argument, the
+Both tools carry the canonical signature in full : every facet argument, the
 paging `offset`, `full_text_only`, `return_facets` and the `vid` / `tab` /
 `scope` overrides. Only the limits are tighter: `max_results` caps at 10 instead
 of 50, and `offset` at 200.

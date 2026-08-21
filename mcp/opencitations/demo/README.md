@@ -26,13 +26,7 @@ tightened result limits. This app serves the same five tools —
 secondary. Set `GRADIO_MCP_SERVER=false` wherever the
 real server is reachable, so clients cannot bind to the wrong one.
 
-## It is standalone
-
-`app.py` imports nothing from the parent folder, because this folder is the
-Space root and `mcp_server.py` does not exist here. The five tools, and the
-normalizers under them, are a **hand-kept copy** of the canonical ones — same
-names, same argument names and types, same response shape including `error` — so
-the surfaces match tool for tool. **Change one, change the other.**
+## Deliberate narrowings
 
 The one signature difference is `sort` and `role`, typed as plain `str` here
 rather than the canonical `Literal`, and validated at the top of the function:

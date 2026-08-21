@@ -31,13 +31,7 @@ is reachable, so clients cannot bind to the wrong one.
 | `count_records` | How many records a query matches, fetching none |
 | `scan_index` | Alphabetical browse of an index, with per-term counts |
 
-## It is standalone
-
-`app.py` imports nothing from the parent folder, this folder is the Space root,
-so `mcp_server.py` does not exist here. The five tools are a **hand-kept copy**
-of the canonical ones — the server has no sixth tool, so the surfaces match tool
-for tool: same names, same argument names and types, same record shape including
-`error`. **Change one, change the other.**
+## Deliberate narrowings
 
 Two deliberate narrowings, both documented in the tool docstrings: `max_results`
 is clamped to 10 instead of 100, and `scan_index`'s `maximum_terms` to 50.

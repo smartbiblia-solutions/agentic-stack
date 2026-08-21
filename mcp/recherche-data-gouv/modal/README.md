@@ -4,7 +4,10 @@ Deploy the server as a serverless HTTPS endpoint on [Modal](https://modal.com).
 
 `mcp_server_stateless.py` is a **standalone duplicate** of the canonical
 `../mcp_server.py`, in the shape of
-[Modal's own FastMCP example](https://modal.com/docs/examples/mcp_server_stateless).
+[Modal's own FastMCP example](https://modal.com/docs/examples/mcp_server_stateless):
+The whole server is built inside `make_mcp_server()`, runtime imports included.
+Modal loads this file on your machine to build the app, and `fastmcp` and `httpx`
+are not installed there.
 
 ## Deploy
 
@@ -62,19 +65,8 @@ them in step.
 
 ## Configuration
 
-The server reads its configuration from the environment, and a Modal Secret is
-how that environment is populated:
-
-```bash
-modal secret create smartbiblia-recherche-data-gouv RECHERCHE_DATA_GOUV_API_URL=...
-```
-
-| Variable | Required | Meaning |
-|---|---|---|
-| `RECHERCHE_DATA_GOUV_API_URL` | no | Dataverse API base URL. Defaults to `https://entrepot.recherche.data.gouv.fr/api`. |
-
-`SECRETS` is empty in `mcp_server_stateless.py` and the deployment works as is;
-uncomment the `modal.Secret.from_name(...)` line once the Secret exists.
+This server needs no credential and no endpoint configuration, so
+`SECRETS` is empty and there is no Modal Secret to create.
 
 ## Why stateless
 

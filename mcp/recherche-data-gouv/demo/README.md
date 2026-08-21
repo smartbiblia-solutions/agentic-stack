@@ -29,13 +29,7 @@ cannot bind to the wrong one.
 | `metrics` | Dataverse Metrics counters, total or broken down |
 | `metadatablocks` | The instance's metadata blocks, or one block schema |
 
-## It is standalone
-
-`app.py` imports nothing from the parent folder, this folder is the Space root,
-so `mcp_server.py` does not exist here. The three tools are a **hand-kept copy**
-of the canonical ones — the server has no fourth tool, so the surfaces match tool
-for tool: same names, same response shape including `error`. **Change one, change
-the other.**
+## Deliberate narrowings
 
 Two deliberate narrowings, both documented in the tool docstrings: `per_page` is
 clamped to 10 instead of 1000, and each tool keeps the handful of arguments a

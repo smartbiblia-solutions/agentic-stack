@@ -11,8 +11,8 @@ agentic-stack/
 └── cli/        # `smartbiblia`, the installer published on PyPI
 ```
 
-Everything targets the same domain — French and international bibliographic
-sources — and everything is designed to be readable by an agent first: strict
+Everything targets the same domain (French and international bibliographic
+sources) and everything is designed to be readable by an agent first: strict
 JSON on stdout, one common record schema across sources, and errors returned as
 data rather than as a crash.
 
@@ -47,7 +47,7 @@ runs with no install step.
 | [`search-works-openalex`](skills/search-works-openalex/) | `openalex` | Search OpenAlex, resolve DOIs, follow citations, classify text by topic |
 | [`search-records-sudoc`](skills/search-records-sudoc/) | `sudoc` | Search the French union catalogue over SRU/UNIMARC: search, PPN/ISBN lookup, counts, index scan |
 | [`search-records-hal`](skills/search-records-hal/) | `hal` | Search HAL, the French open repository, collection-first (Solr) |
-| [`search-theses-fr`](skills/search-theses-fr/) | `theses` | Search theses.fr, the French national register of doctoral theses: search, record with résumés, person index, facets |
+| [`search-theses-fr`](skills/search-theses-fr/) | `theses` | Search theses.fr, the French national register of doctoral theses: search, record with abstracts, person index, facets |
 | [`lookup-citations-opencitations`](skills/lookup-citations-opencitations/) | `opencitations` | Look up citation counts, citing and cited works, self-citations and CC0 metadata from a DOI, PMID, OMID or ORCID |
 | [`search-authorities-idref`](skills/search-authorities-idref/) | `search-idref` | Search the French national authority file (Solr), fetch an authority by PPN, list its linked bibliography |
 | [`resolve-persons-idref`](skills/resolve-persons-idref/) | `resolve-idref` | Decide *which* IdRef authority is a given person, with a confidence score and a right to abstain |
@@ -86,9 +86,8 @@ uv run mcp/openalex/mcp_server.py --transport stdio
 ```
 
 Each server folder also ships a `demo/` — a **standalone** Gradio app that
-re-implements two of the server's tools against the same API, wraps them in a
-browser UI, and deploys as a Hugging Face Space with no extra scaffolding. It
-imports nothing from the folder above it, because `demo/` is the Space root:
+re-implements the server's tools against the same API, wraps them in a
+browser UI, and deploys as a Hugging Face Space with no extra scaffolding:
 
 ```bash
 cd mcp/openalex/demo
@@ -105,8 +104,7 @@ flag reference.
 
 The [`smartbiblia`](cli/) CLI reads the catalogue
 (`cli/src/smartbiblia/catalog.toml`) from GitHub on every call and downloads the
-folder you ask for — it ships no copy of the skills, so a fix lands in users'
-hands without republishing the package.
+folder you ask for.
 
 ```bash
 uvx smartbiblia list                      # browse the catalogue
@@ -125,9 +123,7 @@ Every command and flag: [`cli/README.md`](cli/README.md).
 
 ## Conventions
 
-These hold across the repository. The two meta-skills that define them —
-`create-agent-skill` and `create-mcp-server` — are the source of truth; this is
-the short version.
+These hold across the repository.
 
 **Naming.** Skills are `<verb>-<object>-<source>`. The folder name, the
 frontmatter `name` and the catalogue `name` are the same string, in kebab-case.
@@ -138,9 +134,8 @@ every time. Stdlib `urllib.request` is reserved for places where a dependency
 cannot be assumed, such as a container `HEALTHCHECK`.
 
 **Environment variables.** A skill reads at most two: `<SOURCE>_API_URL` and
-`<SOURCE>_API_KEY`. Timeouts, retry counts, backoff and jitter are **constants
-in the code**, not tunables — they are properties of the connector, not of the
-installation. A skill that needs neither an endpoint nor a credential ships no
+`<SOURCE>_API_KEY`. Timeouts, retry counts, backoff and jitter are not tunables **constants
+in the code** (properties of the connector). A skill that needs neither an endpoint nor a credential ships no
 `.env`, no `.env.example` and no `## Environment variables` section. MCP servers
 follow the same rule for the environment, and expose their retry parameters as
 CLI flags instead.
@@ -157,8 +152,8 @@ merged and deduplicated on `doi` before synthesis.
 **Secrets.** Never in source, in a returned payload, or in a trace event. `.env`
 files are gitignored; only `.env.example` is committed, always empty.
 
-The conventions that apply to MCP servers alone — the FastMCP pin, the transport
-flag, `--stateless` — are in [`mcp/README.md`](mcp/README.md#conventions).
+The conventions that apply to MCP servers alone (the FastMCP pin, the transport
+flag, `--stateless`) are in [`mcp/README.md`](mcp/README.md#conventions).
 
 ---
 

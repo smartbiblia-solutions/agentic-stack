@@ -25,27 +25,20 @@ limit. This app serves the same three tools — `search_hal`, `list_portals`,
 secondary. Set `GRADIO_MCP_SERVER=false` wherever the real server is
 reachable, so clients cannot bind to the wrong one.
 
-## It is standalone
 
-`app.py` imports nothing from the parent folder, this folder is the Space root,
-so `mcp_server.py` does not exist here. The three tools are a **hand-kept copy**
-of the canonical ones — same names, same argument names and types, same record
-shape including `error` — so the surfaces match tool for tool. **Change one,
-change the other.**
 
-The demo signature is a subset, not a variant: `search_hal` keeps `query`,
-`collection`, `portal`, `filters`, `fields`, `max_results`, `facet_fields`,
-`facet_limit` and `sort`, and drops the arguments a browser demo has no use for
-(`start`, `facet_sort`, `facet_prefix`, `facet_pivot`, `group_field`,
-`group_limit`). Limits are tighter: `max_results` caps at 25 instead of 100 and
-`facet_limit` at 200 instead of 500. `list_portals` and `lookup_reference` carry
-the canonical signatures in full, `max_results` aside.
+## Deliberate narrowings
 
-## Two things that surprise everyone
-
+- The demo signature is a **subset, not a variant**: `search_hal` keeps `query`,
+  `collection`, `portal`, `filters`, `fields`, `max_results`, `facet_fields`,
+  `facet_limit` and `sort`, and drops the arguments a browser demo has no use for
+  (`start`, `facet_sort`, `facet_prefix`, `facet_pivot`, `group_field`,
+  `group_limit`). Limits are tighter: `max_results` caps at 25 instead of 100 and
+  `facet_limit` at 200 instead of 500. `list_portals` and `lookup_reference` carry
+  the canonical signatures in full, `max_results` aside.
 - **Scope first.** A global HAL query answers over three million documents.
   Pass a collection code (UPPERCASE, e.g. `FRANCE-GRILLES`) or a portal code
-  (lowercase, e.g. `tel`) — HAL tells the two apart by the case of the path
+  (lowercase, e.g. `tel`) and HAL tells the two apart by the case of the path
   segment.
 - **The field suffix decides what a field can do.** `_t` is searchable but not
   returnable, `_s` is returnable, facetable and sortable but *not* searchable,

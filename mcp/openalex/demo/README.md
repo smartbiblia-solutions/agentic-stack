@@ -25,13 +25,7 @@ tightened result limits. This app serves the same five tools — `search_works`,
 `GRADIO_MCP_SERVER=false` wherever the real server is reachable, so clients
 cannot bind to the wrong one.
 
-## It is standalone
-
-`app.py` imports nothing from the parent folder: this folder is the Space root,
-so `mcp_server.py` does not exist here. The five tools are a **hand-kept copy** of
-the canonical ones — same names, same argument names and types, same response
-shape including `error` — so the surfaces match tool for tool. **Change one,
-change the other.**
+## Deliberate narrowings
 
 `search_works` carries the canonical signature in full — `date_from`, `date_to`,
 `sort_by`, `author` and `institution` included, with the same name/ORCID and

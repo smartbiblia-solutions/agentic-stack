@@ -107,6 +107,8 @@ Skills:
 | `openalex` | `search-works-openalex` | stable |
 | `sudoc` | `search-records-sudoc` | stable |
 | `hal` | `search-records-hal` | stable |
+| `theses` | `search-theses-fr` | beta |
+| `opencitations` | `lookup-citations-opencitations` | experimental |
 | `search-idref` | `search-authorities-idref` | experimental |
 | `resolve-idref` | `resolve-persons-idref` | beta |
 | `generate-queries` | `generate-search-queries` | stable |
@@ -124,6 +126,8 @@ MCP servers:
 | `recherche-data-gouv` | 8014 | none |
 | `idref-resolver-api` | 8015 | `IDREF_API_URL` |
 | `hal` | 8016 | none |
+| `theses-fr` | 8017 | none |
+| `opencitations` | 8018 | none |
 
 > **Ambiguous aliases.** `openalex` and `hal` name both a skill and an MCP
 > server. Every command below that takes one of them **must** carry
