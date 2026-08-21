@@ -482,6 +482,24 @@ def search_by_organisme(ppn: str, role: str | None = None) -> dict:
 
 # ── Presentation ──────────────────────────────────────────────────────────────
 
+# Every other demo in mcp/*/demo renders a handful of lines per result — sudoc's
+# record view is 5, opencitations' citation list is 3. These renderers were
+# emitting 17 to 6234, because theses.fr answers with six facets at once, four
+# role buckets at once and two full résumés per thesis. On a Space that matters:
+# Gradio negotiates the iframe height with the parent and stops honouring growth
+# after a few consecutive increases, so on a tab whose form is short — every one
+# but Recherche — the overflow ended up unreachable. Bound what the Markdown
+# shows; the tool payloads and the raw JSON beside it still carry everything.
+MAX_FACET_VALUES = 5      # per facet, in the Markdown only
+MAX_FACET_LABEL = 40      # doctoral-school labels run to 100+ characters
+MAX_ORG_ROWS = 10
+MAX_ABSTRACT_CHARS = 800
+
+
+def _excerpt(text: str, limit: int = MAX_ABSTRACT_CHARS) -> str:
+    text = text.strip()
+    return text if len(text) <= limit else text[:limit].rstrip() + " […]"
+
 
 def _render_search(payload: dict) -> str:
     results = payload.get("results") or []
@@ -509,7 +527,7 @@ def _render_search(payload: dict) -> str:
     if payload.get("hydrated"):
         first = next((r for r in results if r.get("abstract")), None)
         if first:
-            lines += ["", "**Résumé du premier résultat**", "", first["abstract"][:1200]]
+            lines += ["", "**Résumé du premier résultat**", "", _excerpt(first["abstract"])]
     return "\n".join(lines)
 
 
@@ -529,9 +547,14 @@ def _render_detail(payload: dict) -> str:
         f"- **DOI** : {r.get('doi') or '—'}",
         f"- **theses.fr** : {r.get('url') or '—'}",
     ]
-    for lang, text in (r.get("abstracts") or {}).items():
-        if text:
-            lines += ["", f"**Résumé ({lang})**", "", text[:2000]]
+    abstracts = {k: v for k, v in (r.get("abstracts") or {}).items() if v}
+    lang, text = next(iter(abstracts.items()), (None, None))
+    if text:
+        lines += ["", f"**Résumé ({lang})**", "", _excerpt(text)]
+        others = [k for k in abstracts if k != lang]
+        if others:
+            lines += ["", f"_Résumé{'s' if len(others) > 1 else ''} en "
+                          f"{', '.join(others)} dans la sortie brute._"]
     return "\n".join(lines)
 
 
@@ -565,21 +588,23 @@ def _render_facets(payload: dict) -> str:
     results = payload.get("results") or []
     if not results:
         return "_Aucune facette._"
-    lines = [f"**{len(results)} facettes** — `{payload.get('query_used')}`", ""]
+    lines = [f"**{len(results)} facettes** — `{payload.get('query_used')}`", "",
+             "| Facette | Valeurs | Les plus fréquentes |", "|---|---|---|"]
     for f in results:
         buckets = f.get("buckets") or []
-        lines += [f"### {f.get('label')} ({len(buckets)} valeurs affichées)", "",
-                  "| Valeur | Thèses |", "|---|---|"]
-        for b in buckets:
-            lines.append(
-                "| {v} | {c} |".format(
-                    v=str(b.get("value") or "—").replace("|", "\\|"),
-                    c=b.get("count") if b.get("count") is not None else "—",
-                )
+        top = " · ".join(
+            "{v} ({c})".format(
+                v=_excerpt(str(b.get("value") or "—"), MAX_FACET_LABEL).replace("|", "\\|"),
+                c=b.get("count") if b.get("count") is not None else "—",
             )
-        lines.append("")
-    lines.append("_Une valeur se recopie telle quelle dans les champs Établissement, "
-                 "Discipline ou Domaine de l'onglet Recherche._")
+            for b in buckets[:MAX_FACET_VALUES]
+        ) or "—"
+        if len(buckets) > MAX_FACET_VALUES:
+            top += f" · … +{len(buckets) - MAX_FACET_VALUES}"
+        lines.append(f"| {f.get('label')} | {len(buckets)} | {top} |")
+    lines += ["", "_Une valeur se recopie telle quelle dans les champs Établissement, "
+                  "Discipline ou Domaine de l'onglet Recherche — depuis la sortie "
+                  "brute, qui porte la liste complète et les libellés entiers._"]
     return "\n".join(lines)
 
 
@@ -600,7 +625,7 @@ def _render_organisme(payload: dict) -> str:
     results = payload.get("results") or []
     if results:
         lines += ["", "| Rôle | Titre | Soutenance |", "|---|---|---|"]
-        for r in results[:25]:
+        for r in results[:MAX_ORG_ROWS]:
             title = (r.get("title") or "Sans titre").replace("|", "\\|")
             url = r.get("url")
             lines.append(
@@ -610,8 +635,9 @@ def _render_organisme(payload: dict) -> str:
                     date=r.get("date") or "en cours",
                 )
             )
-        if len(results) > 25:
-            lines.append(f"| … | _{len(results) - 25} de plus dans la sortie brute_ | |")
+        if len(results) > MAX_ORG_ROWS:
+            lines.append(f"| … | _{len(results) - MAX_ORG_ROWS} de plus dans la "
+                         "sortie brute_ | |")
     return "\n".join(lines)
 
 
@@ -662,7 +688,7 @@ with gr.Blocks(title="theses.fr MCP demo") as demo:
         "Démo autonome du serveur MCP "
         "[`theses-fr`](https://github.com/smartbiblia-solutions/agentic-stack/tree/main/mcp/theses-fr) "
         ", le registre national des thèses de doctorat françaises (ABES).\n\n"
-        "Les résultats de recherche ne portent **jamais** de résumé : cochez "
+        "Par défaut les résultats de recherche ne contiennent pas les résumé : cochez "
         "« Récupérer les résumés », ou consultez une thèse par son identifiant."
     )
 
@@ -714,7 +740,7 @@ with gr.Blocks(title="theses.fr MCP demo") as demo:
             api_name=False,
         )
 
-    with gr.Tab("Une thèse"):
+    with gr.Tab("Notice par NNT"):
         id_value = gr.Textbox(label="NNT ou numéro de sujet", value="2021COAZ4028")
         get_btn = gr.Button("Consulter", variant="primary")
         get_out = gr.Markdown()
@@ -729,8 +755,7 @@ with gr.Blocks(title="theses.fr MCP demo") as demo:
 
     with gr.Tab("Personnes"):
         gr.Markdown(
-            "L'index des thèses n'a pas de champ de nom d'auteur·rice exploitable : "
-            "c'est par ici qu'on part d'un nom pour arriver aux notices."
+            "Accès par l'index des personnes"
         )
         person_query = gr.Textbox(label="Nom", value="", placeholder="Precioso")
         person_rows = gr.Slider(1, MAX_RESULTS, value=5, step=1, label="Résultats")
@@ -752,9 +777,7 @@ with gr.Blocks(title="theses.fr MCP demo") as demo:
 
     with gr.Tab("Facettes"):
         gr.Markdown(
-            "Établissements, écoles doctorales, disciplines et domaines sont "
-            "appariés sur leur libellé exact : cet onglet les énumère, avec "
-            "leurs effectifs, pour la requête de votre choix."
+            "Exemples de résultats avec facettes."
         )
         facet_query = gr.Textbox(label="Requête (Lucene)", value="*")
         facet_limit = gr.Slider(0, 50, value=10, step=1,
@@ -781,9 +804,7 @@ with gr.Blocks(title="theses.fr MCP demo") as demo:
 
     with gr.Tab("Organismes"):
         gr.Markdown(
-            "Le PPN IdRef d'un organisme — pas son `codeEtab`. C'est la seule vue "
-            "qui rassemble les thèses soutenues, en cotutelle, en partenariat de "
-            "recherche et rattachées à une école doctorale."
+            "Accès par le PPN IdRef d'un établissement/organisme aux thèses liées à cet établissement."
         )
         org_ppn = gr.Textbox(label="PPN IdRef", value="", placeholder="241035694")
         org_role = gr.Dropdown([""] + list(ORGANISME_ROLES), value="", label="Rôle (optionnel)")
