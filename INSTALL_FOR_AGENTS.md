@@ -1,6 +1,6 @@
 # Install smartbiblia skills and MCP servers (agent runbook)
 
-You are a coding agent. Follow this runbook top to bottom. Every command is
+You are an AI agent. Follow this runbook top to bottom. Every command is
 non-interactive unless marked otherwise. Stop and report at the first step whose
 verification fails.
 
