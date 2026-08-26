@@ -96,7 +96,7 @@ uvx smartbiblia list --kind mcp --json
 uvx smartbiblia list --tag french --json
 ```
 
-**Never parse the default output of `list`** — it is a Rich table that wraps
+**Never parse the default output of `list`**: it is a Rich table that wraps
 unreadably below ~120 columns. Use `--json`, or the raw TOML above.
 
 ---
@@ -235,7 +235,7 @@ entrypoint.
 Add `--stateless` (or `MCP_STATELESS=true`) when running several replicas behind
 a load balancer: it creates a new transport per request so no session is pinned
 to a replica. It is rejected with `--transport sse`. A stateless response carries
-no `mcp-session-id` header — that is the quickest way to check which mode a
+no `mcp-session-id` header, that is the quickest way to check which mode a
 running server is in.
 
 Timeouts, retries and backoff are **CLI flags** (`--help` lists them), never
@@ -253,15 +253,15 @@ uvx smartbiblia info primo
 
 The rule is in the entry, not in this file:
 
-- **`env_required` empty** — the server works with no configuration at all. Most
+- **`env_required` empty**. The server works with no configuration at all. Most
   of the public sources are in this case. Anything listed in `env` but not in
   `env_required` is an optional improvement, typically an API key that buys a
   higher rate limit.
-- **`env_required` non-empty** — the server cannot start usefully without those
+- **`env_required` non-empty**. The server cannot start usefully without those
   values, and they are **institutional**: an Ex Libris developer account, the
   base URL of a resolver someone deployed. Obtain them from the user or the
   environment. **Do not invent them, and never guess an institutional
-  endpoint** — a plausible-looking wrong URL fails much later than a missing one.
+  endpoint**, a plausible-looking wrong URL fails much later than a missing one.
 
 Pass them in the `env` object of the client config block (`mcp-config` already
 emits the keys with empty values for you to fill), or export them in the
@@ -313,7 +313,7 @@ uvx smartbiblia update sudoc --claude          # reinstall from main
 uvx smartbiblia remove sudoc --claude --force
 ```
 
-`update` **empties the folder before rewriting it** — any local edit inside an
+`update` **empties the folder before rewriting it**, any local edit inside an
 installed skill is lost. Keep modifications outside the installed tree.
 
 To test a branch before it reaches `main`:

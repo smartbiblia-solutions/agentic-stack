@@ -1,7 +1,7 @@
 # Agentic Stack
 
 Reusable **skills** and **MCP servers** for AI agents working on libraries,
-scholarly information, and research workflows — plus a CLI that installs them
+scholarly information, and research workflows, plus a CLI that installs them
 into an agent workspace.
 
 ```text
@@ -11,8 +11,8 @@ agentic-stack/
 └── cli/        # `smartbiblia`, the installer published on PyPI
 ```
 
-Everything here targets the same domain — French and international
-bibliographic sources — and everything is designed to be readable by an agent
+Everything here targets the same domain (French and international
+bibliographic sources) and everything is designed to be readable by an agent
 first: strict JSON on stdout, one response envelope whatever the source, and
 errors returned as data rather than as a crash.
 
@@ -31,14 +31,13 @@ Each fact has one home; the others link to it.
 | [`mcp/README.md`](mcp/README.md) | The servers, their tools and ports, how to run them, MCP-specific conventions |
 | `mcp/<server>/README.md` | Setting that server up in Claude Code, Claude Desktop, Cursor/VS Code; full flag reference; troubleshooting |
 | `skills/<skill>/SKILL.md` | What that skill does, when to use it, what it returns |
-| `CLAUDE.md` | Repo guidance for coding agents |
 
 ---
 
 ## Skills
 
 A skill is a folder an agent runtime loads: a `SKILL.md` saying what it is, when
-to use it and what it returns, plus — only when something must actually run — a
+to use it and what it returns, plus (only when something must actually run) a
 `scripts/cli.py` that [`uv`](https://docs.astral.sh/uv/) executes with no install
 step.
 
@@ -56,7 +55,7 @@ They come in four shapes, and the shape tells you where the work happens:
 |---|---|---|
 | **Retrieval** | `scripts/cli.py` — it calls the API and normalizes the answer | `search-*`, `lookup-*`, `resolve-*`, `convert-*` |
 | **Contract pack** | the *agent*, against `prompts/*.md` and `schemas/*.schema.json` it reads directly; the script only validates what the agent produced | `generate-search-queries`, `synthesize-literature` |
-| **Markdown-only** | the agent, against `SKILL.md` alone — no script, nothing to install | `write-data-management-plan` |
+| **Markdown-only** | the agent, against `SKILL.md` alone; no script, nothing to install | `write-data-management-plan` |
 | **Orchestrator** | the agent, delegating each stage to the skill that owns it | `orchestrate-literature-review` |
 
 They chain, by role rather than by name:
@@ -70,8 +69,7 @@ identity question → authority resolution → authority record → holdings
 
 Every `SKILL.md` ends with a `## Composition hints` section placing that skill in
 those chains, and its frontmatter carries a `selection` block (`use_when`,
-`avoid_when`, `prefer_over`, `combine_with`) — that is where routing between
-siblings is decided, not here.
+`avoid_when`, `prefer_over`, `combine_with`).
 
 A full review runs the first chain end to end. `orchestrate-literature-review`
 owns it: it opens one dated run folder, hands the path to each stage, and every
@@ -92,7 +90,7 @@ uvx smartbiblia list --kind mcp --json          # names, ports, env, env_require
 uv run mcp/openalex/mcp_server.py --transport stdio   # run one from a clone
 ```
 
-Each server folder also ships a `demo/` — a **standalone** Gradio app that
+Each server folder also ships a `demo/`: a **standalone** Gradio app that
 re-implements the server's tools against the same API, wraps them in a
 browser UI, and deploys as a Hugging Face Space with no extra scaffolding:
 
@@ -136,14 +134,14 @@ These hold across the repository.
 frontmatter `name` and the catalogue `name` are the same string, in kebab-case.
 
 **HTTP.** `httpx` only, never `requests`, through **one module-level pooled
-client** — never `httpx.get(...)` per call, which replays the TLS handshake
+client**; never `httpx.get(...)` per call, which replays the TLS handshake
 every time. Stdlib `urllib.request` is reserved for places where a dependency
 cannot be assumed, such as a container `HEALTHCHECK`.
 
 **Environment variables.** A skill reads at most two: `<SOURCE>_API_URL` and
 `<SOURCE>_API_KEY`. Timeouts, retry counts, backoff and jitter are never
-tunables but **constants in the code** — they are properties of the connector,
-not of the installation. A skill that needs neither an endpoint nor a credential
+tunables but **constants in the code** (they are properties of the connector,
+not of the installation). A skill that needs neither an endpoint nor a credential
 ships no `.env`, no `.env.example` and no `## Environment variables` section. MCP servers
 follow the same rule for the environment, and expose their retry parameters as
 CLI flags instead.
@@ -190,7 +188,7 @@ stays useful offline and survives upstream doc churn.
 
 ## Todo
 
-- Skill OpenAlex: rewrite by wrapping [openalex-cli](https://developers.openalex.org/download/openalex-cli)
+- Skill OpenAlex: rewrite from new OpenAlex documentation and OQL search query.
 
 ---
 
