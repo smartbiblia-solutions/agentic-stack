@@ -50,8 +50,8 @@ Docker is needed only for the multi-server compose deployment (step 6, optional)
 
 The catalogue is the authoritative inventory. It is fetched from `main` on every
 CLI invocation, so it is current even for an older installed CLI. Read it
-directly rather than trusting any list embedded in documentation — including the
-snapshot in this file:
+directly rather than trusting any list embedded in documentation — this runbook
+deliberately contains none:
 
 ```bash
 curl -sL https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/main/cli/src/smartbiblia/catalog.toml
@@ -98,40 +98,24 @@ uvx smartbiblia list --tag french --json
 **Never parse the default output of `list`** — it is a Rich table that wraps
 unreadably below ~120 columns. Use `--json`, or the raw TOML above.
 
-### Snapshot (non-authoritative — the catalogue on `main` wins)
+### There is no inventory in this file
 
-Skills:
+Deliberately: the catalogue changes without this runbook changing, so any list
+copied here would be wrong before it was read. Everything you might look for is
+in `list --json` already — every field of the catalogue entry is passed through,
+so a skill carries `maturity`, `path` and `tags`, and an MCP server carries
+`entrypoint`, `port`, `env` and `env_required` as well. Ask it rather than
+looking it up:
 
-| Alias | Canonical name | Maturity |
-|---|---|---|
-| `openalex` | `search-works-openalex` | stable |
-| `sudoc` | `search-records-sudoc` | stable |
-| `hal` | `search-records-hal` | stable |
-| `theses` | `search-theses-fr` | beta |
-| `opencitations` | `lookup-citations-opencitations` | experimental |
-| `search-idref` | `search-authorities-idref` | experimental |
-| `resolve-idref` | `resolve-persons-idref` | beta |
-| `generate-queries` | `generate-search-queries` | stable |
-| `synthesize` | `synthesize-literature` | stable |
-| `convert-unimarc` | `convert-records-unimarc` | stable |
-| `dmp` | `write-data-management-plan` | experimental |
+```bash
+uvx smartbiblia list --kind skill --json   # what skills exist, and how mature
+uvx smartbiblia list --kind mcp --json     # what servers exist, their ports and keys
+uvx smartbiblia info <alias>               # one entry, rendered for reading
+```
 
-MCP servers:
-
-| Alias | Port | Keys required |
-|---|---|---|
-| `openalex` | 8011 | none (`OPENALEX_API_KEY` recommended) |
-| `sudoc-sru` | 8012 | none |
-| `primo` | 8013 | `PRIMO_API_KEY`, `PRIMO_VID`, `PRIMO_TAB`, `PRIMO_SCOPE` |
-| `recherche-data-gouv` | 8014 | none |
-| `idref-resolver-api` | 8015 | `IDREF_API_URL` |
-| `hal` | 8016 | none |
-| `theses-fr` | 8017 | none |
-| `opencitations` | 8018 | none |
-
-> **Ambiguous aliases.** `openalex` and `hal` name both a skill and an MCP
-> server. Every command below that takes one of them **must** carry
-> `--kind skill` or `--kind mcp`, or the CLI exits 1 with
+> **Ambiguous aliases.** Some aliases name both a skill and an MCP server —
+> `list --json` marks them `"ambiguous": true`. Every command below that takes
+> one **must** carry `--kind skill` or `--kind mcp`, or the CLI exits 1 with
 > `'openalex' existe en plusieurs types`.
 
 ---
@@ -145,8 +129,9 @@ to a CLI. It is the lighter path: no process to keep alive, no client config.
 Install an **MCP server** when your client speaks MCP and you want typed tools
 in the model's tool list rather than a shell command.
 
-Both exist for OpenAlex, Sudoc and HAL, over the same upstream APIs. Installing
-both is redundant — pick one per source.
+Several sources ship both, over the same upstream API — those are exactly the
+aliases `list --json` marks `"ambiguous": true`. Installing both is redundant:
+pick one per source.
 
 ---
 
@@ -285,17 +270,17 @@ Read `env` and `env_required` for the server from the catalogue, or:
 uvx smartbiblia info primo
 ```
 
-Servers with an empty `env_required` work with no configuration at all — Sudoc,
-HAL and Recherche Data Gouv are fully public. `OPENALEX_API_KEY` is optional but
-recommended (it buys a higher rate limit).
+The rule is in the entry, not in this file:
 
-Two servers cannot start usefully without values you must obtain from the user
-or the environment — **do not invent them, and do not guess an institutional
-endpoint**:
-
-- `primo`: `PRIMO_API_KEY`, `PRIMO_VID`, `PRIMO_TAB`, `PRIMO_SCOPE` — from the
-  institution's Ex Libris developer account.
-- `idref-resolver-api`: `IDREF_API_URL` — the base URL of a deployed resolver.
+- **`env_required` empty** — the server works with no configuration at all. Most
+  of the public sources are in this case. Anything listed in `env` but not in
+  `env_required` is an optional improvement, typically an API key that buys a
+  higher rate limit.
+- **`env_required` non-empty** — the server cannot start usefully without those
+  values, and they are **institutional**: an Ex Libris developer account, the
+  base URL of a resolver someone deployed. Obtain them from the user or the
+  environment. **Do not invent them, and never guess an institutional
+  endpoint** — a plausible-looking wrong URL fails much later than a missing one.
 
 Pass them in the `env` object of the client config block (`mcp-config` already
 emits the keys with empty values for you to fill), or export them in the
@@ -332,8 +317,9 @@ cp mcp/.env.example mcp/.env      # then fill in the keys you have
 docker compose -f mcp/compose.yml up --build
 ```
 
-Ports: openalex 8011, sudoc-sru 8012, primo 8013, recherche-data-gouv 8014,
-idref-resolver-api 8015, hal 8016. Endpoints at `http://localhost:<port>/mcp`.
+Each server's port is the `port` field of its catalogue entry
+(`uvx smartbiblia list --kind mcp --json`), and `mcp/compose.yml` maps the same
+values. Endpoints are at `http://localhost:<port>/mcp`.
 
 ---
 

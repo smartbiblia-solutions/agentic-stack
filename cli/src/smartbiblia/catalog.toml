@@ -65,6 +65,13 @@ path = "skills/synthesize-literature"
 maturity = "stable"
 tags = ["synthesis", "review", "prisma", "literature"]
 
+[skills.review]
+name = "orchestrate-literature-review"
+description = "Pipeline complet de revue de littérature : dossier de run daté unique, stratégie de recherche, interrogation des sources, déduplication, screening PRISMA, résumés, appréciation qualité et synthèse — chaque étape déléguée à sa propre skill"
+path = "skills/orchestrate-literature-review"
+maturity = "experimental"
+tags = ["literature-review", "orchestration", "prisma", "pipeline"]
+
 [skills.theses]
 name = "search-theses-fr"
 description = "Recherche dans theses.fr : thèses de doctorat françaises soutenues ou en préparation, résumés, directeurs et jurys"
