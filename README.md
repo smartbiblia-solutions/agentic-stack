@@ -28,7 +28,6 @@ Each fact has one home; the others link to it.
 | this file | What is in the repo, which skill to reach for, and the conventions that hold everywhere |
 | [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md) | The install runbook, written for an agent to execute top to bottom |
 | [`cli/README.md`](cli/README.md) | Every `smartbiblia` command and flag *(fr)* |
-| [`cli/DEPLOYMENT.md`](cli/DEPLOYMENT.md) | Publishing a new CLI version to PyPI |
 | [`mcp/README.md`](mcp/README.md) | The seven servers, their tools and ports, how to run them, MCP-specific conventions |
 | `mcp/<server>/README.md` | Setting that server up in Claude Code, Claude Desktop, Cursor/VS Code; full flag reference; troubleshooting |
 | `skills/<skill>/SKILL.md` | What that skill does, when to use it, what it returns |
