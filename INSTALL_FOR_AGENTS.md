@@ -91,32 +91,13 @@ MCP entries carry `entrypoint`, `port`, `env` and `env_required` as well.
 `--json` also accepts `--kind` and `--tag`:
 
 ```bash
+uvx smartbiblia list --kind skill --json
 uvx smartbiblia list --kind mcp --json
 uvx smartbiblia list --tag french --json
 ```
 
 **Never parse the default output of `list`** — it is a Rich table that wraps
 unreadably below ~120 columns. Use `--json`, or the raw TOML above.
-
-### There is no inventory in this file
-
-Deliberately: the catalogue changes without this runbook changing, so any list
-copied here would be wrong before it was read. Everything you might look for is
-in `list --json` already — every field of the catalogue entry is passed through,
-so a skill carries `maturity`, `path` and `tags`, and an MCP server carries
-`entrypoint`, `port`, `env` and `env_required` as well. Ask it rather than
-looking it up:
-
-```bash
-uvx smartbiblia list --kind skill --json   # what skills exist, and how mature
-uvx smartbiblia list --kind mcp --json     # what servers exist, their ports and keys
-uvx smartbiblia info <alias>               # one entry, rendered for reading
-```
-
-> **Ambiguous aliases.** Some aliases name both a skill and an MCP server —
-> `list --json` marks them `"ambiguous": true`. Every command below that takes
-> one **must** carry `--kind skill` or `--kind mcp`, or the CLI exits 1 with
-> `'openalex' existe en plusieurs types`.
 
 ---
 

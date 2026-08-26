@@ -11,10 +11,10 @@ agentic-stack/
 └── cli/        # `smartbiblia`, the installer published on PyPI
 ```
 
-Everything targets the same domain (French and international bibliographic
-sources) and everything is designed to be readable by an agent first: strict
-JSON on stdout, one common record schema across sources, and errors returned as
-data rather than as a crash.
+Everything here targets the same domain — French and international
+bibliographic sources — and everything is designed to be readable by an agent
+first: strict JSON on stdout, one response envelope whatever the source, and
+errors returned as data rather than as a crash.
 
 > **You are an agent asked to install any of this?** Go to
 > [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md) and follow it top to bottom.
@@ -25,10 +25,10 @@ Each fact has one home; the others link to it.
 
 | Document | Answers |
 |---|---|
-| this file | What is in the repo, which skill to reach for, and the conventions that hold everywhere |
+| this file | What is in the repo, how its pieces fit together, and the conventions that hold everywhere |
 | [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md) | The install runbook, written for an agent to execute top to bottom |
 | [`cli/README.md`](cli/README.md) | Every `smartbiblia` command and flag *(fr)* |
-| [`mcp/README.md`](mcp/README.md) | The seven servers, their tools and ports, how to run them, MCP-specific conventions |
+| [`mcp/README.md`](mcp/README.md) | The servers, their tools and ports, how to run them, MCP-specific conventions |
 | `mcp/<server>/README.md` | Setting that server up in Claude Code, Claude Desktop, Cursor/VS Code; full flag reference; troubleshooting |
 | `skills/<skill>/SKILL.md` | What that skill does, when to use it, what it returns |
 | `CLAUDE.md` | Repo guidance for coding agents |
@@ -37,51 +37,59 @@ Each fact has one home; the others link to it.
 
 ## Skills
 
-A skill is a folder with a `SKILL.md` (what it is, when to use it, what it
-returns) and, usually, a `scripts/cli.py` that [`uv`](https://docs.astral.sh/uv/)
-runs with no install step.
+A skill is a folder an agent runtime loads: a `SKILL.md` saying what it is, when
+to use it and what it returns, plus — only when something must actually run — a
+`scripts/cli.py` that [`uv`](https://docs.astral.sh/uv/) executes with no install
+step.
 
-| Skill | Alias | What it does |
-|---|---|---|
-| [`search-works-openalex`](skills/search-works-openalex/) | `openalex` | Search OpenAlex, resolve DOIs, follow citations, classify text by topic |
-| [`search-records-sudoc`](skills/search-records-sudoc/) | `sudoc` | Search the French union catalogue over SRU/UNIMARC: search, PPN/ISBN lookup, counts, index scan |
-| [`search-records-hal`](skills/search-records-hal/) | `hal` | Search HAL, the French open repository, collection-first (Solr) |
-| [`search-theses-fr`](skills/search-theses-fr/) | `theses` | Search theses.fr, the French national register of doctoral theses: search, record with abstracts, person index, facets |
-| [`lookup-citations-opencitations`](skills/lookup-citations-opencitations/) | `opencitations` | Look up citation counts, citing and cited works, self-citations and CC0 metadata from a DOI, PMID, OMID or ORCID |
-| [`search-authorities-idref`](skills/search-authorities-idref/) | `search-idref` | Search the French national authority file (Solr), fetch an authority by PPN, list its linked bibliography |
-| [`resolve-persons-idref`](skills/resolve-persons-idref/) | `resolve-idref` | Decide *which* IdRef authority is a given person, with a confidence score and a right to abstain |
-| [`generate-search-queries`](skills/generate-search-queries/) | `generate-queries` | Turn a research question into 8–15 validated bilingual (EN/FR) queries |
-| [`synthesize-literature`](skills/synthesize-literature/) | `synthesize` | Post-retrieval contract pack: PRISMA screening, summarization, appraisal, synthesis |
-| [`convert-records-unimarc`](skills/convert-records-unimarc/) | `convert-unimarc` | Convert UNIMARC records between XML, JSON and ISO 2709 |
-| [`write-data-management-plan`](skills/write-data-management-plan/) | `dmp` | Write a FAIR-aligned Data Management Plan |
+The CLI catalogue is the inventory:
 
-They chain:
-
-```text
-generate-search-queries
-  → search-works-openalex / search-records-hal / search-records-sudoc
-    / search-theses-fr
-      → lookup-citations-opencitations
-      → synthesize-literature
-
-resolve-persons-idref → search-authorities-idref → search-records-sudoc
+```bash
+uvx smartbiblia list --kind skill          # what exists, with maturity and tags
+uvx smartbiblia list --tag french --json   # filtered, machine-readable
+uvx smartbiblia info synthesize            # one skill, in detail
 ```
 
-Each `SKILL.md` ends with a `## Composition hints` section describing where that
-skill sits relative to the others.
+They come in four shapes, and the shape tells you where the work happens:
+
+| Shape | The work is done by | Example of what it looks like |
+|---|---|---|
+| **Retrieval** | `scripts/cli.py` — it calls the API and normalizes the answer | `search-*`, `lookup-*`, `resolve-*`, `convert-*` |
+| **Contract pack** | the *agent*, against `prompts/*.md` and `schemas/*.schema.json` it reads directly; the script only validates what the agent produced | `generate-search-queries`, `synthesize-literature` |
+| **Markdown-only** | the agent, against `SKILL.md` alone — no script, nothing to install | `write-data-management-plan` |
+| **Orchestrator** | the agent, delegating each stage to the skill that owns it | `orchestrate-literature-review` |
+
+They chain, by role rather than by name:
+
+```text
+question → search strategy → retrieval (one or more sources)
+         → deduplication → screening → summarization → appraisal → synthesis
+
+identity question → authority resolution → authority record → holdings
+```
+
+Every `SKILL.md` ends with a `## Composition hints` section placing that skill in
+those chains, and its frontmatter carries a `selection` block (`use_when`,
+`avoid_when`, `prefer_over`, `combine_with`) — that is where routing between
+siblings is decided, not here.
+
+A full review runs the first chain end to end. `orchestrate-literature-review`
+owns it: it opens one dated run folder, hands the path to each stage, and every
+artefact — queries, records, screening decisions, synthesis — is written into
+that one folder rather than loose in the workspace. Each stage also runs
+standalone; the orchestrator is a convenience, not a dependency.
 
 ---
 
 ## MCP servers
 
 The same sources, exposed over [MCP](https://modelcontextprotocol.io) for agents
-that prefer a live connection to a shell tool: `openalex` (8011), `sudoc-sru`
-(8012), `primo` (8013), `recherche-data-gouv` (8014),
-`idref-resolver-api` (8015), `hal` (8016), `theses-fr` (8017),
-`opencitations` (8018).
+that prefer a live connection to a shell tool. Which servers exist, and on which
+default port, comes from the same catalogue:
 
 ```bash
-uv run mcp/openalex/mcp_server.py --transport stdio
+uvx smartbiblia list --kind mcp --json          # names, ports, env, env_required
+uv run mcp/openalex/mcp_server.py --transport stdio   # run one from a clone
 ```
 
 Each server folder also ships a `demo/` — a **standalone** Gradio app that
@@ -133,9 +141,10 @@ every time. Stdlib `urllib.request` is reserved for places where a dependency
 cannot be assumed, such as a container `HEALTHCHECK`.
 
 **Environment variables.** A skill reads at most two: `<SOURCE>_API_URL` and
-`<SOURCE>_API_KEY`. Timeouts, retry counts, backoff and jitter are not tunables **constants
-in the code** (properties of the connector). A skill that needs neither an endpoint nor a credential ships no
-`.env`, no `.env.example` and no `## Environment variables` section. MCP servers
+`<SOURCE>_API_KEY`. Timeouts, retry counts, backoff and jitter are never
+tunables but **constants in the code** — they are properties of the connector,
+not of the installation. A skill that needs neither an endpoint nor a credential
+ships no `.env`, no `.env.example` and no `## Environment variables` section. MCP servers
 follow the same rule for the environment, and expose their retry parameters as
 CLI flags instead.
 
@@ -143,10 +152,24 @@ CLI flags instead.
 `error` field alongside empty results, so an agent can read the failure instead
 of parsing a stack trace.
 
-**Output.** Strict JSON on stdout, normalized to one common record schema
-(`source`, `id`, `title`, `authors`, `abstract`, `doi`, `url`, `year`, `date`,
-`doc_type`, `journal`, `raw`), so results from OpenAlex, HAL and Sudoc can be
-merged and deduplicated on `doi` before synthesis.
+**Output.** Strict JSON on stdout, in one envelope everywhere:
+
+```jsonc
+{"total_found": 1523, "returned": 15, "results": [ /* … */ ], "error": null}
+```
+
+`results` is always an array, `error` is always present and `null` on success,
+and `total_found` is `null` — not `0` — when the source cannot count. That much
+is universal: it is what lets an agent consume a connector it has never seen.
+
+The **record** inside `results` is the source's own data model, anchored only by
+`source`, `id`, `url` and a human-readable label. Field names align *within a
+family of sources over the same kind of data*: the bibliographic connectors
+share `title`, `authors`, `abstract`, `doi`, `year`, `date`, `doc_type`,
+`journal` and `raw`, which is what lets OpenAlex, HAL and Sudoc results merge and
+deduplicate on `doi` before synthesis. That is a convention of *that family*, not
+a schema every skill must fill — a statistical or geospatial connector defines
+its own record and is no less compliant.
 
 **Secrets.** Never in source, in a returned payload, or in a trace event. `.env`
 files are gitignored; only `.env.example` is committed, always empty.
