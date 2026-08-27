@@ -503,6 +503,28 @@ def search_catalog(
     Primo is institution-scoped. The API key and the gateway come from the
     X-Primo-* request headers listed in this tool's meta.headers, falling back to
     what the deployment configured; the view can also be set per call below.
+    Query syntax. Primo's `q` parameter is the triple `field,precision,value`,
+    assembled here from `query`, `field` and `precision` — pass plain words in
+    `query`, not a pre-built triple. Fields: any (every indexed field), title,
+    creator (author), sub (subject), usertag (reader tags). Precisions —
+    contains (all words, any order), exact (the whole field matches),
+    begins_with (prefix). A `;` in `query` is Primo's own separator between
+    clauses and is replaced by a space here, so one call sends one clause.
+    Facets. Each facet argument becomes a `qInclude` clause
+    `category,exact,value`, and several are AND-combined: resource_type →
+    facet_rtype (books, articles, journals, book_chapters, dissertations,
+    reviews, newspaper_articles, images, audios, videos, maps, scores,
+    databases, web_resources), language → facet_lang (three-letter ISO 639-2/B —
+    eng, fre, ger, spa, ita…), library → facet_library and collection →
+    facet_domain (both institution-specific codes), availability →
+    facet_tlevel (available, online_resources, physical_item; some views also
+    expose open_access and peer_reviewed), year_from/year_to → facet_searchcreationdate as a range
+    [<from> TO <to>] with `*` for an open bound. Values are exact strings, and
+    the library and collection codes differ per institution: run once with
+    return_facets=True and read the buckets rather than guessing. A year
+    outside 1000-2999 counts as no bound. Sorting: rank (relevance, default),
+    title, author, date, date_d (newest first), date_a (oldest first); an
+    unknown value falls back to rank.
     Args:
         query: Free-text search terms, e.g. "histoire de la lecture".
         field: Field searched — any, title, creator, sub (subject) or usertag.
@@ -557,6 +579,12 @@ def get_record(
     Fetch one Primo record by its recordid.
     The API key and the gateway come from the X-Primo-* request headers listed in
     this tool's meta.headers, falling back to what the deployment configured.
+    There is no query syntax here: the record must already be identified. The
+    recordid is the control.recordid value of a PNX record, returned as the
+    record_id of every search_catalog hit — local records typically look like
+    "alma99…", Central Discovery Index records like "cdi_…". The context must
+    match the record's origin ("L" local, "PC" CDI); asking for the wrong one
+    answers "record not found" rather than an error.
     Args:
         record_id: Primo recordid, the control.recordid value returned by search_catalog, e.g. "alma990001234".
         context: "L" for a local institution record, "PC" for a Central Discovery Index record.

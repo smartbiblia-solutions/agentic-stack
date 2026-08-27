@@ -493,6 +493,55 @@ async def search_catalog(
     """
     Search an Ex Libris Primo discovery layer (library catalog + discovery index).
 
+    ─── Query syntax ──────────────────────────────────────────────────────────
+
+    Primo's `q` parameter is a triple `field,precision,value`, which this tool
+    assembles from the `query`, `field` and `precision` arguments — pass plain
+    words in `query`, never a pre-built triple.
+
+      field      any (default, every indexed field) · title · creator (author)
+                 · sub (subject) · usertag (reader-supplied tags)
+      precision  contains (default, all words in any order) · exact (the whole
+                 field matches the value) · begins_with (prefix match)
+
+    A `;` inside `query` is Primo's own separator between several `q` clauses;
+    it is replaced by a space here, so one call sends one clause. Split a
+    multi-field search into several calls, or narrow it with the facets below.
+
+    ─── Facets ────────────────────────────────────────────────────────────────
+
+    Each facet argument becomes a `qInclude` clause `category,exact,value`,
+    and several of them are AND-combined. The category behind each argument —
+
+      resource_type   facet_rtype     books, articles, journals, book_chapters,
+                                      dissertations, reviews, newspaper_articles,
+                                      images, audios, videos, maps, scores,
+                                      databases, web_resources
+      language        facet_lang      3-letter ISO 639-2/B code: eng, fre, ger,
+                                      spa, ita, lat…
+      library         facet_library   institution-specific library code
+      collection      facet_domain    institution-specific collection / domain
+      availability    facet_tlevel    available, online_resources,
+                                      physical_item; some views also expose
+                                      open_access and peer_reviewed
+      year_from /     facet_searchcreationdate  sent as a range
+      year_to                         [<from> TO <to>], an open bound as `*`
+
+    Facet values are exact strings, and `library` and `collection` in
+    particular are configured per institution: call once with
+    return_facets=True and read the buckets rather than guessing. A year
+    outside 1000-2999 is treated as "no bound", so a stray 0 does not silently
+    return zero records.
+
+    ─── Sorting, paging, availability ─────────────────────────────────────────
+
+    sort: rank (relevance, default) · title · author · date · date_d (newest
+    first) · date_a (oldest first); an unknown value falls back to rank.
+    Paging: max_results is capped at 50 by the API, offset walks the result set
+    (beyond ~2000 Primo degrades — narrow the query instead).
+    full_text_only=True sends pcAvailability=false, keeping only records the
+    institution can actually deliver.
+
     Args:
         query: Free-text search term(s).
         field: Search field — any, title, creator, sub (subject), usertag.
@@ -593,6 +642,14 @@ async def get_record(
 ) -> dict:
     """
     Fetch a single Primo PNX record by its recordid.
+
+    There is no query syntax here: the record must already be identified. The
+    `recordid` is the `control.recordid` value of a PNX record, returned as the
+    `id` of every search_catalog hit — local records typically look like
+    "alma99…" and Central Discovery Index records like "cdi_…". The `context`
+    must match the record's origin: "L" for a local institution record, "PC"
+    for a CDI record. Asking for the wrong one answers "record not found"
+    rather than an error.
 
     Args:
         record_id: Primo recordid (the control.recordid value, e.g. "alma990001234").

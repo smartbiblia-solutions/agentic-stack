@@ -629,7 +629,7 @@ def search_sudoc(
     Utiliser la syntaxe naturelle `index=terme`. L'encodage SRU (%3D etc.)
     est appliqué automatiquement.
 
-    Opérateurs booléens (priorité égale, s'exécutent gauche à droite) :
+    Opérateurs booléens, de priorité égale, exécutés de gauche à droite
       AND  →  `and`, `+`, ou espace simple    (opérateur par défaut)
       OR   →  `or` ou `|`
       NOT  →  `not`
@@ -639,7 +639,7 @@ def search_sudoc(
 
     ─── Index disponibles ─────────────────────────────────────────────────────
 
-    Numéros (correspondance exacte) :
+    Numéros — correspondance exacte
       ppn   Numéro de notice Sudoc         ppn=070685045
       isb   ISBN (avec ou sans tirets)     isb=9782070360246
       isn   ISSN                           isn=2558-4278
@@ -649,45 +649,45 @@ def search_sudoc(
       sou   Numéro source (corpus)         sou=star*
       bqt   Code bouquet électronique      bqt=2014-110
 
-    Titre :
+    Titre
       mti   Mots du titre (index mot)      mti=jardins japonais
       tco   Titre complet (phrase)         tco=oui-oui*
       tab   Titre abrégé périodique (phrase) tab=nat*
       col   Collection (mot)               col=dunod
 
-    Auteur :
+    Auteur
       aut   Mots auteur (mot)              aut=lagerlof
       per   Nom de personne (phrase)       per=eco,umberto  ou  per=eco*
       org   Collectivité auteur (phrase)   org=insee  ou  org="insee rhone*"
 
-    Sujet :
+    Sujet
       msu   Mots sujets français (mot)     msu=hominides
       vma   Point d'accès sujet RAMEAU (phrase) vma=abricot*
       fgr   Forme / Genre (mot)            fgr=actes congres
       msa   Mots sujets anglais (mot)      msa=apricot*
       mee   Sujet MeSH anglais (mot)       mee=antivir*
 
-    Notes :
+    Notes
       nth   Note de thèse (mot)            nth=biophysique and lyon
       res   Résumé / sommaire (mot)        res="vers blancs"
       lva   Note livre ancien (mot)        lva=memoires
       fir   Source de financement (mot)    fir=labx
       rec   Note de récompense (mot)       rec=award*
 
-    Exemplaires / holdings :
+    Exemplaires / holdings
       rbc   Numéro RCR de bibliothèque     rbc=840079901
       pcp   Plan de Conservation Partagée  pcp=pcdroit
       rpc   Reliure / Provenance           rpc="armes de Dominique*"
       cot   Cote d'exemplaire (phrase)     cot="839.73 EKM"  ou  cot=839.7*
 
-    Général :
+    Général
       tou   Tous les mots                  tou="ocre jaune"
       edi   Éditeur (mot)                  edi=gallimard
 
     ─── Index de type phrase ──────────────────────────────────────────────────
 
     Les index de type phrase (tco, tab, per, org, vma, cot) exigent la forme
-    complète et normalisée du terme. En cas de doute, utiliser la troncature :
+    complète et normalisée du terme. En cas de doute, utiliser la troncature
       per=lagerlof*     au lieu de  per=lagerlof,Selma
       org="insee rhone*"  au lieu de  org="insee rhone-alpes"
 
@@ -992,16 +992,61 @@ def count_records(query: str) -> dict:
     Retourne le nombre total de notices correspondant à une requête SRU,
     sans rapatrier les données (une seule requête HTTP, maximumRecords=1).
 
-    Utiliser cet outil pour :
+    Utiliser cet outil pour
     - Estimer la taille d'un corpus avant un search_sudoc avec max_results élevé.
     - Valider qu'une requête donne des résultats avant de la construire
       davantage.
     - Comparer la couverture de différentes stratégies de recherche.
 
-    Accepte la même syntaxe de requête que search_sudoc (même index,
-    mêmes opérateurs, même troncature). Les limitations (TDO, LAN, APU…)
-    doivent être incluses manuellement dans `query` si nécessaire :
-    ex. "edi=gallimard and tdo=b and lan=fre"
+    Accepte exactement la même syntaxe de requête que search_sudoc — mêmes
+    index, mêmes opérateurs, même troncature. Différence : les limitations
+    (tdo, lan, lai, pay, pai, apu) ne sont pas des paramètres ici, elles
+    doivent être écrites dans `query`.
+
+    ─── Syntaxe de requête ────────────────────────────────────────────────────
+
+    Syntaxe naturelle `index=terme` ; l'encodage SRU (%3D etc.) est appliqué
+    automatiquement.
+    Opérateurs, de priorité égale, exécutés de gauche à droite
+      AND → `and`, `+`, ou espace (défaut)   OR → `or` ou `|`   NOT → `not`
+    Parenthèses pour modifier la priorité : `pcp=pcdroit not (fgr=actes congres)`
+    Troncature : `*` en fin de terme → `mti=orthod*`, `nnt=2018perp*`
+    Expression exacte : guillemets → `tou="ocre jaune"`
+
+    Limitations (à écrire dans `query`, toujours combinées en AND ; une requête
+    ne peut pas contenir que des limitations)
+      tdo  type de document : a=articles b=monographies imprimées f=manuscrits
+           g=enreg. sonores musicaux i=images fixes k=cartes m=partitions
+           n=enreg. sonores non musicaux o=monographies électroniques
+           t=périodiques et collections v=audiovisuel x=objets/multimédia
+           y=thèses
+      lan  10 langues majeures : ger eng spa fre ita lat dut pol por rus
+      lai  autres langues (ISO 639-2/3) : dan ara jpn swe…
+      pay  11 pays majeurs : de be ca es us fr it nl gb ru ch
+      pai  autres pays (ISO 3166) : se jp br…
+      apu  année de publication : `apu=2004`, `apu=1995-2000`, `apu=>=2010`,
+           `apu=<=1999`
+
+    ─── Index disponibles ─────────────────────────────────────────────────────
+
+    Numéros    ppn (notice Sudoc) · isb (ISBN) · isn (ISSN) · num (tous
+               identifiants) · nnt (n° national de thèse) · ocn (WorldCat)
+               · sou (n° de corpus source) · bqt (bouquet électronique)
+    Titre      mti (mots du titre) · tco (titre complet, phrase) · tab (titre
+               abrégé de périodique, phrase) · col (collection)
+    Auteur     aut (mots auteur) · per (personne, phrase : "nom,prénom")
+               · org (collectivité, phrase)
+    Sujet      msu (sujets français) · vma (point d'accès RAMEAU, phrase)
+               · fgr (forme / genre) · msa (sujets anglais) · mee (MeSH anglais)
+    Notes      nth (note de thèse) · res (résumé) · lva (livre ancien)
+               · fir (financement) · rec (récompense)
+    Exemplaire rbc (RCR de bibliothèque) · pcp (plan de conservation partagée)
+               · rpc (reliure / provenance) · cot (cote, phrase)
+    Général    tou (tous les mots) · edi (éditeur)
+
+    Les index de type phrase (tco, tab, per, org, vma, cot) exigent la forme
+    complète et normalisée du terme, ou une troncature : `per=eco*`. Chercher
+    sans accents ramène les formes accentuées ET non accentuées.
 
     Args:
         query: Requête SRU en syntaxe naturelle.
@@ -1052,7 +1097,7 @@ def scan_index(
     Explore un index Sudoc par ordre alphabétique à partir d'un terme donné
     (opération SRU `scan`).
 
-    Utilisations typiques :
+    Utilisations typiques
     - Découvrir les formes normalisées d'un terme dans un index phrase
       (per, org, vma, tco) avant d'écrire une requête exacte.
     - Vérifier qu'un terme existe dans un index et voir ses variantes.
@@ -1060,7 +1105,7 @@ def scan_index(
       est peut-être orthographié différemment dans le catalogue).
     - Obtenir les effectifs (nombre de notices) pour chaque terme.
 
-    Exemples d'utilisation :
+    Exemples d'utilisation
       index_key="mti", term="paralogue"    → termes titre autour de "paralogue"
       index_key="aut", term="lagerlof"     → variantes du nom "lagerlof"
       index_key="vma", term="abricot"      → vedettes RAMEAU débutant par "abricot"
@@ -1068,9 +1113,28 @@ def scan_index(
       index_key="org", term="insee"        → formes normalisées des collectivités "INSEE"
       index_key="edi", term="gallimard"    → éditeurs "gallimard..."
 
-    Index disponibles (voir search_sudoc pour la liste complète) :
-      mti aut per org msu vma fgr msa mee nth res lva fir rec
-      rbc pcp rpc cot tou edi col tab tco sou
+    ─── Index disponibles ─────────────────────────────────────────────────────
+
+    Numéros    ppn (notice Sudoc) · isb (ISBN) · isn (ISSN) · num (tous
+               identifiants) · nnt (n° national de thèse) · ocn (WorldCat)
+               · sou (n° de corpus source) · bqt (bouquet électronique)
+    Titre      mti (mots du titre) · tco (titre complet, phrase) · tab (titre
+               abrégé de périodique, phrase) · col (collection)
+    Auteur     aut (mots auteur) · per (personne, phrase : "nom,prénom")
+               · org (collectivité, phrase)
+    Sujet      msu (sujets français) · vma (point d'accès RAMEAU, phrase)
+               · fgr (forme / genre) · msa (sujets anglais) · mee (MeSH anglais)
+    Notes      nth (note de thèse) · res (résumé) · lva (livre ancien)
+               · fir (financement) · rec (récompense)
+    Exemplaire rbc (RCR de bibliothèque) · pcp (plan de conservation partagée)
+               · rpc (reliure / provenance) · cot (cote, phrase)
+    Général    tou (tous les mots) · edi (éditeur)
+
+    `scan` n'accepte qu'un seul index à la fois : ni opérateur booléen, ni
+    limitation (tdo, lan, apu…) — pour cela, voir search_sudoc ou
+    count_records. Sur un index de type phrase (tco, tab, per, org, vma, cot),
+    c'est précisément l'outil qui donne la forme normalisée exigée par une
+    requête exacte : passer le début du terme suffit.
 
     Args:
         index_key: Clé d'index Sudoc (ex. "mti", "aut", "vma", "per").

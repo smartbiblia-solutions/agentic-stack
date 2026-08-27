@@ -14,7 +14,7 @@ as a Hugging Face Space.
 | [`sudoc-sru`](./sudoc-sru/) | 8012 | no | French union catalogue (SRU/UNIMARC): search, PPN and ISBN lookup, record counts, index scan |
 | [`hal`](./hal/) | 8016 | no | HAL, the French national open repository (Solr): scoped search over collections and portals, facets, AuréHAL referentials |
 | [`primo`](./primo/) | 8013 | **yes** | An institutional Primo (Ex Libris) discovery layer: catalogue search and record retrieval |
-| [`recherche-data-gouv`](./recherche-data-gouv/) | 8014 | no | French national research data repository (Dataverse): dataset search, usage metrics, metadata blocks |
+| [`recherche-data-gouv`](./recherche-data-gouv/) | 8014 | no | French national research data repository (Dataverse): dataset and collection search, collection and dataset retrieval, file listings, usage metrics, metadata blocks |
 | [`idref-resolver-api`](./idref-resolver-api/) | 8015 | **yes** | Person-to-IdRef-PPN alignment from free-text clues, with an explicit abstention when the evidence is too weak |
 | [`theses-fr`](./theses-fr/) | 8017 | no | theses.fr, the French national register of doctoral theses (ABES): thesis search with résumé hydration, record lookup by NNT, person index, facets |
 | [`opencitations`](./opencitations/) | 8018 | no | OpenCitations Meta v1 and Index v2 (CC0): citation and reference counts, citing and cited works with self-citation flags, bibliographic metadata by identifier |
@@ -59,7 +59,7 @@ and troubleshooting.
 
 **`primo`** — `search_catalog`, `get_record`
 
-**`recherche-data-gouv`** — `search`, `metrics`, `metadatablocks`
+**`recherche-data-gouv`** — `search`, `metrics`, `metadatablocks`, `get_collection`, `list_collection_contents`, `get_dataset`, `list_dataset_files`
 
 **`idref-resolver-api`** — `align_person`
 

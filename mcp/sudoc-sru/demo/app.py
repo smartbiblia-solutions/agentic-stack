@@ -245,8 +245,29 @@ def search_sudoc(
     """
     Search the French union catalogue Sudoc over the Abes SRU service.
 
+    Query syntax. Natural `index=term` pairs; the SRU encoding (%3D and friends)
+    is applied for you. Operators, all of equal priority and applied left to
+    right: AND — `and`, `+` or a space (the default); OR — `or` or `|`; NOT —
+    `not`. Parentheses override priority. Truncation is a trailing `*`
+    (`mti=orthod*`); an exact phrase goes in quotes (`tou="ocre jaune"`).
+
+    Indexes. Numbers: ppn (Sudoc record number), isb (ISBN), isn (ISSN), num
+    (any identifier), nnt (national thesis number), ocn (WorldCat), sou (source
+    corpus number, e.g. sou=star*), bqt (e-resource bundle). Title: mti (title
+    words), tco (full title, phrase), tab (abbreviated serial title, phrase),
+    col (series). Author: aut (author words), per (person, phrase,
+    "lastname,firstname"), org (corporate author, phrase). Subject: msu (French
+    subject words), vma (RAMEAU access point, phrase), fgr (form/genre), msa
+    (English subject words), mee (MeSH). Notes: nth (thesis note — institution
+    and discipline), res (abstract), lva (rare books), fir (funding), rec
+    (award). Holdings: rbc (library RCR number), pcp (shared conservation plan),
+    rpc (binding/provenance), cot (shelf mark, phrase). General: tou (all
+    words), edi (publisher). Phrase indexes need the full normalized form or a
+    truncation; searching without accents matches both accented and unaccented
+    forms.
+
     Args:
-        query: Sudoc SRU query, e.g. 'mti=jardins and japonais', 'aut=lagerlof', 'tou="ocre jaune"'. Indexes: mti (title), aut (author), tou (all), nth (thesis subject), sou (subject).
+        query: Sudoc SRU query, e.g. 'mti=jardins and japonais', 'aut=lagerlof', 'tou="ocre jaune"'. Indexes and operators are listed above.
         max_results: Number of records to return, 1-10 on this demo endpoint.
         doc_type: One TDO letter code restricting the document type: b=printed monograph, y=thesis, t=periodical, a=article, o=e-monograph, k=map, m=score, f=manuscript. Leave empty for all.
         year_from: Earliest publication year, e.g. 2010. Leave empty for no lower bound.
@@ -368,7 +389,38 @@ def count_records(query: str) -> dict:
     """
     Count the Sudoc records matching an SRU query without fetching any of them.
 
-    One HTTP call with maximumRecords=1. Use it to size a corpus before a large search_sudoc, or to check that a query matches anything before refining it. Same query syntax as search_sudoc — limitations such as tdo, lan or apu must be written into `query` yourself, e.g. "edi=gallimard and lan=fre".
+    One HTTP call with maximumRecords=1. Use it to size a corpus before a large search_sudoc, or to check that a query matches anything before refining it. Same indexes and operators as search_sudoc; unlike search_sudoc, the limitations are not arguments here and must be written into `query`, e.g. "edi=gallimard and lan=fre".
+
+    Query syntax. Natural `index=term` pairs; the SRU encoding (%3D and friends)
+    is applied for you. Operators, all of equal priority and applied left to
+    right: AND — `and`, `+` or a space (the default); OR — `or` or `|`; NOT —
+    `not`. Parentheses override priority. Truncation is a trailing `*`
+    (`mti=orthod*`); an exact phrase goes in quotes (`tou="ocre jaune"`).
+
+    Indexes. Numbers: ppn (Sudoc record number), isb (ISBN), isn (ISSN), num
+    (any identifier), nnt (national thesis number), ocn (WorldCat), sou (source
+    corpus number, e.g. sou=star*), bqt (e-resource bundle). Title: mti (title
+    words), tco (full title, phrase), tab (abbreviated serial title, phrase),
+    col (series). Author: aut (author words), per (person, phrase,
+    "lastname,firstname"), org (corporate author, phrase). Subject: msu (French
+    subject words), vma (RAMEAU access point, phrase), fgr (form/genre), msa
+    (English subject words), mee (MeSH). Notes: nth (thesis note — institution
+    and discipline), res (abstract), lva (rare books), fir (funding), rec
+    (award). Holdings: rbc (library RCR number), pcp (shared conservation plan),
+    rpc (binding/provenance), cot (shelf mark, phrase). General: tou (all
+    words), edi (publisher). Phrase indexes need the full normalized form or a
+    truncation; searching without accents matches both accented and unaccented
+    forms.
+
+    Limitations, written inside `query` here and always AND-combined (a query
+    made only of limitations is rejected): tdo (document type: a=articles
+    b=printed monographs f=manuscripts g=musical recordings i=still images
+    k=maps m=scores n=non-musical recordings o=e-monographs t=serials
+    v=audiovisual x=objects/multimedia y=theses), lan (the 10 major languages —
+    ger eng spa fre ita lat dut pol por rus), lai (any other language, ISO
+    639-2/3), pay (the 11 major countries: de be ca es us fr it nl gb ru ch),
+    pai (any other country, ISO 3166), apu (publication year: `apu=2004`,
+    `apu=1995-2000`, `apu=>=2010`, `apu=<=1999`).
 
     Args:
         query: SRU query, e.g. "aut=zola and tdo=b", "nth=toulouse and tdo=y".
@@ -405,7 +457,22 @@ def scan_index(
     """
     Browse a Sudoc index alphabetically from a starting term (SRU `scan` operation).
 
-    Use it to discover the normalized form of a term before writing an exact query, to see its variants, to understand why a query returns nothing, or to read the record count behind each term. Indexes: mti aut per org msu vma fgr msa mee nth res lva fir rec rbc pcp rpc cot tou edi col tab tco sou.
+    Use it to discover the normalized form of a term before writing an exact query, to see its variants, to understand why a query returns nothing, or to read the record count behind each term. It browses one index at a time: no boolean operator, no limitation.
+
+    Indexes. Numbers: ppn (Sudoc record number), isb (ISBN), isn (ISSN), num
+    (any identifier), nnt (national thesis number), ocn (WorldCat), sou (source
+    corpus number, e.g. sou=star*), bqt (e-resource bundle). Title: mti (title
+    words), tco (full title, phrase), tab (abbreviated serial title, phrase),
+    col (series). Author: aut (author words), per (person, phrase,
+    "lastname,firstname"), org (corporate author, phrase). Subject: msu (French
+    subject words), vma (RAMEAU access point, phrase), fgr (form/genre), msa
+    (English subject words), mee (MeSH). Notes: nth (thesis note — institution
+    and discipline), res (abstract), lva (rare books), fir (funding), rec
+    (award). Holdings: rbc (library RCR number), pcp (shared conservation plan),
+    rpc (binding/provenance), cot (shelf mark, phrase). General: tou (all
+    words), edi (publisher). Phrase indexes need the full normalized form or a
+    truncation; searching without accents matches both accented and unaccented
+    forms.
 
     Args:
         index_key: Sudoc index key, e.g. "edi", "aut", "vma", "per".
