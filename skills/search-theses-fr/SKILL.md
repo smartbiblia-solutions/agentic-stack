@@ -383,6 +383,29 @@ uv run ./skills/search-theses-fr/scripts/cli.py search \
 
 ---
 
+## Artifact contract
+
+The CLI writes one complete JSON response envelope to stdout and nothing else.
+It does not choose or create a project, review, or run directory, and it has no
+`--output` flag: when persistence is wanted, the calling agent redirects stdout
+or captures the payload itself — the whole envelope, not just `results`.
+
+Stable filenames, when one is needed:
+
+| What produced it | Filename |
+|---|---|
+| `search`, `organisme` | `theses-fr-<query-slug>.json` |
+| `get` | `theses-fr-<record-id>.json` |
+| `facets`, `persons` | `theses-fr-<operation>-<query-slug>.json` |
+
+Slugs are lowercase kebab-case, every non-alphanumeric character collapsed to
+`-`. No counters, no result counts, no status words, and no date unless a date
+is part of the query itself — a `--date-from` sync window is, a run date is not.
+The parent directory is the caller's business, and no filename is needed at all
+when the result is only being returned to the user.
+
+---
+
 ## Composition hints
 
 ```

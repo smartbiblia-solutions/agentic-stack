@@ -9,8 +9,8 @@ description: >
   phrases like "build a search strategy for", "find search terms for",
   "systematic review on", "what should I search for", "generate queries about",
   or any request that implies going from a research question to searchable
-  expressions. Opens the review run folder the whole pipeline writes into, and
-  saves the strategy there rather than loose in the working directory.
+  expressions. Returns the validated strategy as JSON; the calling agent decides
+  where, and whether, to persist it.
 version: "0.3.0"
 author: smartbiblia
 maturity: stable
@@ -31,14 +31,11 @@ selection:
     - A systematic review protocol must document its search strategy.
   avoid_when:
     - Queries already exist and the next step is retrieval.
-    - The request is a full review from question to synthesis — use
-      orchestrate-literature-review, which calls this skill as its first stage.
     - The user supplies keywords directly and only wants a search run.
     - Records have been retrieved and the next step is screening or synthesis.
   prefer_over:
     - ad-hoc-query-writing
   combine_with:
-    - orchestrate-literature-review
     - search-works-openalex
     - search-records-hal
     - search-records-sudoc
@@ -152,96 +149,38 @@ academic database retrieval step.
 
 ---
 
-## Where the output goes
+## Artifact contract
 
-This skill is normally the **first** step of a review, so unless an orchestrator
-is driving it is the one that **creates the run folder** every later skill writes
-into. Getting this right here is what keeps the strategy, the retrieved records,
-the screening decisions and the synthesis in one directory instead of scattered
-across the workspace.
+The deliverable is one validated JSON object, returned to the caller.
 
-### When the orchestrator is driving
-
-`orchestrate-literature-review` creates the run folder and **hands you the
-path**. Use it verbatim: write into it, skip the discovery below, and do not
-re-derive the slug — a question paraphrased twice slugifies twice, and the review
-ends up in two folders.
-
-Called on its own, this skill does the discovery itself, exactly as follows.
-
-### The run folder
-
-```text
-reviews/<YYYY-MM-DD>-<topic-slug>/
-├── README.md            ← run manifest; its first line is the join key
-└── 00-strategy/
-    └── search_queries.json      ← this skill's validated output
-```
-
-- `reviews/` is the default root under the current working directory; a folder
-  the user names wins over it.
-- `<YYYY-MM-DD>` is today. `<topic-slug>` is the research question compressed to
-  3–6 meaningful words, lowercase kebab-case, stopwords dropped —
-  `tool-augmented-llm-agents`, not `queries-final`.
-- Later stages add `01-corpus/`, `02-screening/`, `03-summaries/`,
-  `04-metadata/`, `05-appraisal/`, `06-synthesis/`. Do not create them here;
-  create only what you write.
-
-**This layout is duplicated, not referenced.** `orchestrate-literature-review`
-states it canonically; it is repeated here because the skills install
-separately and this one must work with the orchestrator absent. Change one,
-change the other.
-
-### Before creating: look for an existing run
-
-The downstream skills are installed separately and share no state with this one,
-so when no orchestrator supplies the path, the folder is found on disk — never
-carried in memory:
-
-```bash
-ls -d reviews/*/ 2>/dev/null && head -1 reviews/*/README.md
-```
-
-1. **The user named a folder** — use it.
-2. **A `README.md` first line matches this research question** — that run already
-   exists; write `00-strategy/search_queries.json` into it.
-3. **Otherwise** — create the folder, write `README.md`, then the strategy.
-
-Never open a second folder for a question that already has one.
-
-### README.md
-
-Write it as the folder is created. Its **first line is the research question
-verbatim**, because that line is how every downstream skill recognises this run:
-
-```markdown
-# <research question, verbatim>
-
-- Started: 2026-08-26
-- Strategy: 12 queries (8 en, 4 fr) — `00-strategy/search_queries.json`
-- Stages run: 00-strategy
-```
-
-Each later stage appends its own line. Announce the path once, in your reply, so
-the retrieval step that follows has it.
+- The skill does not choose or create a project, review, or run directory, and
+  does not look for one on disk.
+- When the calling agent supplies a destination, save the validated JSON there —
+  in a workflow that has a strategy directory, that is where it belongs.
+- Otherwise, return the JSON and persist nothing.
+- The conventional filename is `search_queries.json`. Use it whenever the
+  artifact is written to disk; do not force a filename when the strategy is only
+  being returned to the user.
 
 ---
 
 ## Composition hints
 
+This skill's output is a natural upstream for the retrieval connectors, whose
+records in turn feed `synthesize-literature`:
+
 ```
-generate-search-queries          ← this skill: always first
+generate-search-queries          ← this skill
       ↓
-  → search-works-openalex        ← run the `en` queries here
-  → search-records-hal           ← run the `fr` queries here
-  → search-records-sudoc         ← run the `fr` queries against library holdings
+  → search-works-openalex        ← the `en` queries fit here
+  → search-records-hal           ← the `fr` queries fit here
+  → search-records-sudoc         ← the `fr` queries against library holdings
       ↓
     synthesize-literature        ← screen, appraise, synthesize
 ```
 
-Every skill in that chain writes into the same run folder this one opens —
-retrieval into `01-corpus/`, `synthesize-literature` into `02-screening/` and
-beyond. Name the path in your reply so the next step inherits it.
+That is compatibility, not a sequence this skill triggers: whether any of those
+steps runs, and where their outputs go, is the calling agent's decision.
 
 Feed `queries[].query` straight into the retrieval skills' `--query` / `--q`
 flags, routing on `queries[].lang`. `suggested_filters` maps onto the retrieval
@@ -252,9 +191,6 @@ flags: `open_access_recommended` → `--oa`, `date_range_recommendation` →
 
 ## Rules
 
-- Locate or create the run folder first (see **Where the output goes**), and
-  save the validated JSON as `00-strategy/search_queries.json` inside it. A
-  strategy file written to the working-directory root is a bug.
 - Read `prompts/generate_search_queries.md`, produce JSON, validate. Fix and
   re-validate on failure.
 - Max 2 retries on schema validation failure, then stop and report the error.
@@ -270,8 +206,3 @@ flags: `open_access_recommended` → `--oa`, `date_range_recommendation` →
   the `queries` array requires `minItems: 8`.
 - **Prompt file not found**: it lives at
   `./skills/generate-search-queries/prompts/generate_search_queries.md`.
-- **Two candidate run folders for the same question**: pick the one whose
-  `README.md` first line matches exactly, and tell the user the other exists.
-  Do not merge them silently.
-- **Question refined after the folder exists**: that is a new review. Say so
-  and open a new folder rather than editing the join key.

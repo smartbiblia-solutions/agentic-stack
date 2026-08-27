@@ -7,6 +7,7 @@ into an agent workspace.
 ```text
 agentic-stack/
 ├── skills/     # agent skills: SKILL.md + a self-contained uv CLI
+├── agents/     # agent instructions that compose those skills into a workflow
 ├── mcp/        # MCP servers: one mcp_server.py + Dockerfile per source
 └── cli/        # `smartbiblia`, the installer published on PyPI
 ```
@@ -31,6 +32,7 @@ Each fact has one home; the others link to it.
 | [`mcp/README.md`](mcp/README.md) | The servers, their tools and ports, how to run them, MCP-specific conventions |
 | `mcp/<server>/README.md` | Setting that server up in Claude Code, Claude Desktop, Cursor/VS Code; full flag reference; troubleshooting |
 | `skills/<skill>/SKILL.md` | What that skill does, when to use it, what it returns |
+| `agents/<agent>/AGENTS.md` | How an agent composes several skills into a workflow: workspace, stage order, artifact placement |
 
 ---
 
@@ -53,10 +55,10 @@ They come in four shapes, and the shape tells you where the work happens:
 
 | Shape | The work is done by | Example of what it looks like |
 |---|---|---|
-| **Retrieval** | `scripts/cli.py` — it calls the API and normalizes the answer | `search-*`, `lookup-*`, `resolve-*`, `convert-*` |
+| **Retrieval / API** | `scripts/cli.py` — it calls a remote API and normalizes the answer | `search-*`, `lookup-*`, `resolve-*` |
+| **Local transformation** | `scripts/cli.py` — it parses, converts or validates locally, calling nothing | `convert-records-unimarc` |
 | **Contract pack** | the *agent*, against `prompts/*.md` and `schemas/*.schema.json` it reads directly; the script only validates what the agent produced | `generate-search-queries`, `synthesize-literature` |
 | **Markdown-only** | the agent, against `SKILL.md` alone; no script, nothing to install | `write-data-management-plan` |
-| **Orchestrator** | the agent, delegating each stage to the skill that owns it | `orchestrate-literature-review` |
 
 They chain, by role rather than by name:
 
@@ -71,11 +73,12 @@ Every `SKILL.md` ends with a `## Composition hints` section placing that skill i
 those chains, and its frontmatter carries a `selection` block (`use_when`,
 `avoid_when`, `prefer_over`, `combine_with`).
 
-A full review runs the first chain end to end. `orchestrate-literature-review`
-owns it: it opens one dated run folder, hands the path to each stage, and every
-artefact — queries, records, screening decisions, synthesis — is written into
-that one folder rather than loose in the workspace. Each stage also runs
-standalone; the orchestrator is a convenience, not a dependency.
+Chaining is the *agent's* job, not a skill's. A skill knows its own capability
+and the shape of the data it emits; nothing in `skills/` opens a shared
+workspace, sequences stages, or decides that another skill will run.
+`agents/literature-research-agent/AGENTS.md` is the example that does own all
+that — the research directory, the stage layout, the merge and deduplication,
+the manifest. Every skill also runs standalone, with no `AGENTS.md` present.
 
 ---
 
@@ -91,8 +94,10 @@ uv run mcp/openalex/mcp_server.py --transport stdio   # run one from a clone
 ```
 
 Each server folder also ships a `demo/`: a **standalone** Gradio app that
-re-implements the server's tools against the same API, wraps them in a
-browser UI, and deploys as a Hugging Face Space with no extra scaffolding:
+re-implements **every** tool of that server against the same API — same names,
+same response shape, possibly narrower arguments and tighter result caps — wraps
+them in a browser UI, and deploys as a Hugging Face Space with no extra
+scaffolding:
 
 ```bash
 cd mcp/openalex/demo
@@ -142,23 +147,32 @@ cannot be assumed, such as a container `HEALTHCHECK`.
 `<SOURCE>_API_KEY`. Timeouts, retry counts, backoff and jitter are never
 tunables but **constants in the code** (they are properties of the connector,
 not of the installation). A skill that needs neither an endpoint nor a credential
-ships no `.env`, no `.env.example` and no `## Environment variables` section. MCP servers
-follow the same rule for the environment, and expose their retry parameters as
-CLI flags instead.
+ships no `.env` and no `.env.example`; its `## Environment variables` section is
+either omitted or a single line saying *None* — never a list of invented knobs.
+MCP servers follow the same rule for the environment, and expose their retry
+parameters as CLI flags instead.
 
 **Errors.** A retrieval CLI always exits 0. Upstream failures come back in an
 `error` field alongside empty results, so an agent can read the failure instead
 of parsing a stack trace.
 
-**Output.** Strict JSON on stdout, in one envelope everywhere:
+**Output.** Strict JSON on stdout. Every **record operation** — search, list,
+lookup, retrieve — answers in one envelope:
 
 ```jsonc
 {"total_found": 1523, "returned": 15, "results": [ /* … */ ], "error": null}
 ```
 
 `results` is always an array, `error` is always present and `null` on success,
-and `total_found` is `null` — not `0` — when the source cannot count. That much
-is universal: it is what lets an agent consume a connector it has never seen.
+and `total_found` is `null` — not `0` — when the source cannot count. That is
+what lets an agent consume a record connector it has never seen.
+
+Operations that do not return records are not held to it, and say so in their
+own `SKILL.md`: validators return a verdict object, local converters return a
+status object or stream a payload, and a few analytical operations have their
+own documented shape (OpenAlex `classify-text`, Sudoc `count` and `scan`). The
+rule is that every operation states its contract in one place, not that every
+operation has the same one.
 
 The **record** inside `results` is the source's own data model, anchored only by
 `source`, `id`, `url` and a human-readable label. Field names align *within a

@@ -228,6 +228,28 @@ other `search-*` skills without transformation.
 - Transient failures (429, 500, 502, 503, 504) are retried twice with exponential
   backoff and jitter before being reported.
 
+## Artifact contract
+
+The CLI writes one complete JSON response envelope to stdout and nothing else.
+It does not choose or create a project, review, or run directory, and it has no
+`--output` flag: when persistence is wanted, the calling agent redirects stdout
+or captures the payload itself — the whole envelope, not just `results`.
+
+Stable filenames, when one is needed:
+
+| What produced it | Filename |
+|---|---|
+| `search` | `idref-<query-slug>.json` |
+| `get` | `idref-<ppn>.json` |
+| `references` | `idref-references-<ppn>.json` |
+
+Slugs are lowercase kebab-case, every non-alphanumeric character collapsed to
+`-`. No counters, no result counts, no status words, and no dates. The parent
+directory is the caller's business, and no filename is needed at all when the
+result is only being returned to the user.
+
+---
+
 ## Composition hints
 
 ```text

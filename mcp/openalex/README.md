@@ -310,12 +310,13 @@ curl -i http://localhost:8011/sse    # sse
 
 ## Browser demo / Hugging Face Space
 
-[`demo/`](demo/) holds a **standalone** Gradio app that re-implements
-`search_works`, `search_semantic` and `classify_text` against the same OpenAlex
-endpoints and wraps
-them in a browser UI. 
-
-See this [README file](./demo/README.md)
+[`demo/`](demo/) holds a **standalone** Gradio app that re-implements **every**
+tool of `mcp_server.py` — `search_works`, `search_semantic`, `lookup_by_doi`,
+`get_citing_works` and `classify_text` — against the same upstream and wraps
+them in a browser UI. Same names, same response shape; only the argument surface
+and the result caps may be narrower, and each narrowing is stated in the tool
+docstring and in [`demo/README.md`](./demo/README.md). Change one, change the
+other.
 
 ---
 

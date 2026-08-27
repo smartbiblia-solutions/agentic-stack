@@ -296,11 +296,12 @@ curl -i http://localhost:8012/sse    # sse
 
 ## Browser demo / Hugging Face Space
 
-[`demo/`](demo/) holds a **standalone** Gradio app that re-implements
-`search_sudoc` and `lookup_by_ppn` against the same upstream and wraps them in a browser
-UI. 
-
-See this [README file](./demo/README.md)
+[`demo/`](demo/) holds a **standalone** Gradio app that re-implements **every**
+tool of `mcp_server.py` — `search_sudoc`, `lookup_by_ppn`, `lookup_by_isbn`,
+`count_records` and `scan_index` — against the same upstream and wraps them in a
+browser UI. Same names, same response shape; only the argument surface and the
+result caps may be narrower, and each narrowing is stated in the tool docstring
+and in [`demo/README.md`](./demo/README.md). Change one, change the other.
 
 ---
 

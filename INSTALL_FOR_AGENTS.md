@@ -68,7 +68,7 @@ uvx smartbiblia list --json
   "catalog_version": 2,
   "source": "https://github.com/smartbiblia-solutions/agentic-stack",
   "branch": "main",
-  "returned": 15,
+  "returned": 19,
   "entries": [
     {
       "kind": "skill",
@@ -84,8 +84,10 @@ uvx smartbiblia list --json
 }
 ```
 
-`alias` is what you pass on the command line, `name` is the folder that gets
-created, and `ambiguous: true` marks a name that needs `--kind` (see below).
+`returned` is however many entries the catalogue holds when the call is made —
+the catalogue is the inventory of record, so read the count from the output
+rather than from this example. `alias` is what you pass on the command line,
+`name` is the folder that gets created, and `ambiguous: true` marks a name that needs `--kind` (see below).
 MCP entries carry `entrypoint`, `port`, `env` and `env_required` as well.
 
 `--json` also accepts `--kind` and `--tag`:

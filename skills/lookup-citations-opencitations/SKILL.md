@@ -210,6 +210,29 @@ and the volume threshold are constants in `scripts/cli.py`.
 More verified quirks, with the measurements behind them, in
 `references/llm.md`.
 
+## Artifact contract
+
+The CLI writes one complete JSON response envelope to stdout and nothing else.
+It does not choose or create a project, review, or run directory, and it has no
+`--output` flag: when persistence is wanted, the calling agent redirects stdout
+or captures the payload itself — the whole envelope, not just `results`.
+
+Stable filenames, when one is needed:
+
+| What produced it | Filename |
+|---|---|
+| `citations`, `references`, `metadata`, `works-by-person` | `opencitations-<record-id>.json` |
+| `counts` | `opencitations-counts-<record-id>.json` |
+
+`<record-id>` is the identifier with its scheme prefix, slugified —
+`doi:10.1108/jd-12-2013-0166` becomes `doi-10-1108-jd-12-2013-0166`. Filenames
+are lowercase kebab-case, every non-alphanumeric character collapsed to `-`, and
+carry no counters, counts, status words, or dates. The parent directory is the
+caller's business, and no filename is needed at all when the result is only
+being returned to the user.
+
+---
+
 ## Composition hints
 
 Upstream: `generate-search-queries` → `search-works-openalex` (or

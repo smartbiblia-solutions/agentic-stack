@@ -1,7 +1,7 @@
 # MCP servers
 
-Seven [MCP](https://modelcontextprotocol.io) servers that give AI agents direct
-access to scholarly and bibliographic sources. Each one is a single
+[MCP](https://modelcontextprotocol.io) servers that give AI agents direct access
+to scholarly and bibliographic sources. Each one is a single
 self-contained `mcp_server.py` with inline
 [PEP 723](https://peps.python.org/pep-0723/) dependencies, runnable by
 [`uv`](https://docs.astral.sh/uv/) with no install step, shipped with a
@@ -19,11 +19,15 @@ as a Hugging Face Space.
 | [`theses-fr`](./theses-fr/) | 8017 | no | theses.fr, the French national register of doctoral theses (ABES): thesis search with résumé hydration, record lookup by NNT, person index, facets |
 | [`opencitations`](./opencitations/) | 8018 | no | OpenCitations Meta v1 and Index v2 (CC0): citation and reference counts, citing and cited works with self-citation flags, bibliographic metadata by identifier |
 
+[`cli/src/smartbiblia/catalog.toml`](../cli/src/smartbiblia/catalog.toml) is the
+inventory of record — it is what `uvx smartbiblia list --kind mcp` reads, and the
+table above follows it rather than the other way round.
+
 Each server has its own README with client-by-client setup (Claude Code, Claude
 Desktop, Cursor/VS Code), a zero-install stdio recipe, the full flag reference
 and troubleshooting.
 
-**Some demo MCP servers are deployed as HuggingFace spaces, see this [HuggingFace collection](https://huggingface.co/collections/Geraldine/academic-mcp-servers).**
+**Some demo MCP servers are deployed as Hugging Face Spaces, see this [Hugging Face collection](https://huggingface.co/collections/Geraldine/academic-mcp-servers).**
 
 >**Important tip related to demo MCP deployment in Claude Desktop**: Claude Desktop does not natively support direct HTTP/URL-based fields
  (expects local stdio processes using command and args, "http" type or url key are not allowed). 
@@ -45,8 +49,8 @@ and troubleshooting.
 
 ## Tools at a glance
 
-**`openalex`** — `search_works`, `lookup_by_doi`, `get_citing_works`,
-`classify_text`
+**`openalex`** — `search_works`, `search_semantic`, `lookup_by_doi`,
+`get_citing_works`, `classify_text`
 
 **`sudoc-sru`** — `search_sudoc`, `lookup_by_ppn`, `lookup_by_isbn`,
 `count_records`, `scan_index`
@@ -95,8 +99,8 @@ Endpoints: `http://localhost:{8011,8012,8013,8014,8015,8016,8017,8018}/mcp`.
 ### In a browser
 
 Every server folder also holds a `demo/` — a **standalone** Gradio app that
-re-implements one to three of the server's tools against the same API and wraps
-them in a UI:
+re-implements **every** tool of its `mcp_server.py` against the same API and
+wraps them in a UI:
 
 ```bash
 cd mcp/openalex/demo
@@ -105,12 +109,17 @@ uv run --with 'gradio[mcp]>=6,<7' --with httpx app.py
 
 `demo/app.py` imports nothing from the folder above it: the Space root is
 `demo/`, so `mcp_server.py` does not exist there. Its tools are a hand-kept copy
-— same names, same arguments, same response shape. Change one, change the other.
+— **same tools, same names, same response shape**; what a demo may narrow is a
+tool's *surface*, and only where a browser form justifies it: tighter result caps
+than canonical, and the odd argument no form can express. Every narrowing is
+stated in the tool docstring and in `demo/README.md`. Change one, change the
+other.
 
 Each `demo/` is a deployable Hugging Face Space as it stands (`git subtree push
 --prefix=mcp/<server>/demo space main`); see the folder's README. The demo MCP
 endpoint it serves at `/gradio_api/mcp/sse` is **secondary** — `mcp_server.py`
-remains canonical, with the full tool set and no tightened result limits.
+remains canonical, with the untightened result limits and the full argument
+surface.
 
 ### Via the CLI
 
@@ -140,8 +149,9 @@ hold here too. What follows is specific to the MCP servers:
 - **One file**: `mcp_server.py`, plus a `Dockerfile`, a `README.md`, and a
   `demo/` folder (`app.py`, `requirements.txt`, `README.md` with the Space
   front-matter) deployable as a Hugging Face Space. `demo/app.py` is a separate
-  artefact: it re-implements a narrow subset of the tools and imports nothing
-  from its parent folder, which does not exist once `demo/` is the Space root.
+  artefact: it re-implements **every** tool of the server — possibly with
+  narrower arguments and tighter result caps — and imports nothing from its
+  parent folder, which does not exist once `demo/` is the Space root.
 - **FastMCP is pinned to `>=3.4,<4`** in the PEP 723 header and in every
   `Dockerfile`, so `uv run` resolves the same major everywhere. FastMCP 4 is
   still a beta prerelease; `uv` skips prereleases by default, so moving to it

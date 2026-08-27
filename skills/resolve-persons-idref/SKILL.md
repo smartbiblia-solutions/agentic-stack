@@ -183,6 +183,29 @@ abstention with a reason is worth more than a wrong PPN in an authority file.
 
 ---
 
+## Artifact contract
+
+The CLI writes one complete JSON response envelope to stdout and nothing else.
+It does not choose or create a project, review, or run directory, and it has no
+`--output` flag: when persistence is wanted, the calling agent redirects stdout
+or captures the payload itself — the whole envelope, not just `results`.
+
+Stable filenames, when one is needed:
+
+| What produced it | Filename |
+|---|---|
+| `align-person` | `idref-align-person-<name-slug>.json` |
+| `health` | `idref-health.json` |
+
+`<name-slug>` is the `--name` value, lowercase kebab-case, every
+non-alphanumeric character collapsed to `-`; the operation prefix keeps it clear
+of the authority records `search-authorities-idref` writes as `idref-<ppn>.json`.
+No counters, no candidate counts, no status words, no dates. The parent
+directory is the caller's business, and no filename is needed at all when the
+result is only being returned to the user.
+
+---
+
 ## Composition hints
 
 ```text

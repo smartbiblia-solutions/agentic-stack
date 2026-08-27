@@ -437,6 +437,29 @@ The CLI **always exits with code 0** — always check for the `error` key.
 
 ---
 
+## Artifact contract
+
+The CLI writes one complete JSON response to stdout and nothing else — the
+record envelope, or, for `count` and `scan`, the shape documented above. It does
+not choose or create a project, review, or run directory, and it has no
+`--output` flag: when persistence is wanted, the calling agent redirects stdout
+or captures the payload itself — the whole response, not just `results`.
+
+Stable filenames, when one is needed:
+
+| What produced it | Filename |
+|---|---|
+| `search` | `sudoc-<query-slug>.json` |
+| `lookup-by-ppn`, `lookup-by-isbn` | `sudoc-<record-id>.json` |
+| `count`, `scan` | `sudoc-<operation>-<query-slug>.json` |
+
+Slugs are lowercase kebab-case, every non-alphanumeric character collapsed to
+`-`. No counters, no result counts, no status words, and no date unless a date
+is part of the query itself. The parent directory is the caller's business, and
+no filename is needed at all when the result is only being returned to the user.
+
+---
+
 ## Composition hints
 
 ```

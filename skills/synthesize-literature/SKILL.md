@@ -7,10 +7,9 @@ description: >
   task involves evaluating, summarizing, or synthesizing a set of already-retrieved
   academic papers. Each task is addressable independently — use a single task in
   isolation or chain them in a full review pipeline. Always use this skill before
-  any synthesis or appraisal step. All outputs are written into a single dated
-  review folder with one numbered subfolder per pipeline stage — never loose in
-  the working directory. Do not use it for retrieval — retrieval must be handled
-  separately before using this skill.
+  any synthesis or appraisal step. Each task returns one schema-validated JSON
+  object; where it is persisted is the calling agent's decision. Do not use it
+  for retrieval — retrieval must be handled separately before using this skill.
 version: "1.4.0"
 author: smartbiblia
 maturity: stable
@@ -31,14 +30,11 @@ selection:
     - A systematic review needs a documented, schema-validated methodology.
   avoid_when:
     - No papers have been retrieved yet; run a retrieval skill first.
-    - The request is a full review from question to synthesis — use
-      orchestrate-literature-review, which delegates these tasks back here.
     - The task is only to build a search strategy; use generate-search-queries.
     - The task is bibliographic format conversion.
   prefer_over:
     - freeform-summarization
   combine_with:
-    - orchestrate-literature-review
     - generate-search-queries
     - search-works-openalex
     - search-records-hal
@@ -57,8 +53,9 @@ tags:
 ## Purpose
 
 A contract pack for the post-retrieval stages of a literature review. Each task
-is backed by a methodological prompt and a strict JSON schema. The CLI exposes
-four commands: `list`, `prompt`, `schema` and `validate`.
+is backed by a methodological prompt and a strict JSON schema, which the agent
+reads directly from `prompts/` and `schemas/`. The CLI does one thing:
+`validate` the JSON the agent produced.
 
 This skill is a **task library** for post-retrieval analysis. It answers: *how to execute this step correctly*.
 Pipeline orchestration (what to do, in what order) is handled at the agent level.
@@ -138,149 +135,40 @@ Every task `<t>` in the table above has exactly two files, both named after it:
 There is no subcommand for either; opening a file is not something a script
 should do on your behalf.
 
-## Where outputs go
+## Artifact contract
 
-Every file this skill produces belongs to **one review run**, and every run owns
-**one folder**. Nothing is written loose in the working directory.
+Each task returns one schema-validated JSON object. The skill does not create,
+discover, resume, or own a project, review, or run directory, and it never
+infers a parent workspace from the research question.
 
-### The run folder
+**Destinations are supplied by the caller.** When the calling agent gives a
+destination, write there. When it does not, return the JSON and persist nothing.
 
-```text
-reviews/<YYYY-MM-DD>-<topic-slug>/
-```
+**The record key.** Name a record-level artifact `<source>-<id>`, lowercased,
+every non-alphanumeric character collapsed to `-`: `openalex-w2741809807.json`,
+`hal-hal-04312345.json`. When a record has no source id, fall back to its DOI on
+the same rule (`doi-10-1145-3targ-2024-0117.json`). Reuse the identical key at
+every stage the record passes through — that is what lets a caller join the
+stages without an index.
 
-- `reviews/` is the default root, created under the current working directory.
-  If the user names a directory, use theirs instead — the internal layout below
-  does not change.
-- `<YYYY-MM-DD>` is the date the run starts, so successive runs on the same
-  question sort chronologically instead of colliding.
-- `<topic-slug>` is the research question compressed to 3–6 meaningful words,
-  lowercase kebab-case, stopwords dropped. It must be readable a month later:
-  `tool-augmented-llm-agents`, not `run-2` or `review-final`.
+**Recommended relative paths**, when the calling agent asks for the conventional
+layout of a multi-stage review. They are relative to a workspace root the caller
+owns; this skill does not create that root.
 
-Ask the user for the folder label only if the research question has not been
-stated. Otherwise derive it and say, in one line, where you are writing.
+| Task | Relative destination |
+|---|---|
+| `screen_study_prisma` | `02-screening/<record-key>.json` |
+| screening log | `02-screening/screening-log.json` |
+| `summarize_paper` | `03-summaries/<record-key>.json` |
+| `extract_metadata` | `04-metadata/<record-key>.json` |
+| `appraise_study_quality` | `05-appraisal/<record-key>.json` |
+| `synthesize_papers_<mode>` | `06-synthesis/<task-name>.json` |
 
-### Inside the run folder
+Synthesis outputs are named after the task, since there is at most one of each:
+`synthesize_papers_prisma.json`, `synthesize_papers_thematic.json`.
 
-```text
-reviews/2026-08-26-tool-augmented-llm-agents/
-├── README.md                     ← run manifest, written first, updated last
-├── 00-strategy/                  ← generate-search-queries output (upstream)
-│   └── search_queries.json
-├── 01-corpus/                    ← retrieval output (upstream)
-│   ├── openalex-tool-use.json        one file per source × query
-│   ├── hal-agents-outillage.json
-│   └── corpus.json                   merged + deduplicated on doi
-├── 02-screening/
-│   ├── openalex-w2741809807.json     one screen_study_prisma output per record
-│   └── screening-log.json            the PRISMA log: every decision, in order
-├── 03-summaries/
-│   └── openalex-w2741809807.json     one summarize_paper output per record
-├── 04-metadata/
-│   └── openalex-w2741809807.json     one extract_metadata output per record
-├── 05-appraisal/
-│   └── openalex-w2741809807.json     one appraise_study_quality output per record
-└── 06-synthesis/
-    ├── synthesize_papers_thematic.json
-    └── report.md                     the prose deliverable, if one is asked for
-```
-
-Rules for the tree:
-
-- **Stage folders are numbered** in pipeline order, so the directory listing
-  reads as the method. Create only the stages the run actually executes — a
-  screening-only run has `01-corpus/` and `02-screening/` and nothing else.
-- **One record, one file, same name at every stage.** The file name is the
-  record key `<source>-<id>`, lowercased, every non-alphanumeric character
-  collapsed to `-`: `openalex-w2741809807.json`, `hal-hal-04312345.json`. When
-  a record has no source id, fall back to its DOI on the same rule
-  (`doi-10-1145-3targ-2024-0117.json`). The identical name across
-  `02-screening/`, `03-summaries/` and `05-appraisal/` is what lets an agent
-  join the stages without an index.
-- **Synthesis outputs are named after the task**, since there is at most one of
-  each per run: `synthesize_papers_prisma.json`,
-  `synthesize_papers_thematic.json`.
-- **Never encode meaning in an ad-hoc prefix.** `exact_react.json` and
-  `search_gorilla.json` in a flat directory say nothing about which stage, which
-  run, or which record they belong to; the same content as
-  `02-screening/openalex-w2741809807.json` says all three.
-
-### When to add a subfolder
-
-Add exactly one level under a stage folder, and only for a reason that is in the
-data:
-
-- the corpus is split across **several sub-questions or arms** —
-  `03-summaries/<subquestion-slug>/`;
-- the run keeps sources deliberately separate rather than merged —
-  `02-screening/<source>/`;
-- a stage holds more than roughly 80 files and one of the two splits above
-  applies.
-
-Do not nest deeper, and do not shard alphabetically or by batch: a second level
-buys nothing an agent cannot get from the file name.
-
-**This layout is duplicated, not referenced.** `orchestrate-literature-review`
-states it canonically; it is repeated here because the skills install
-separately and this one must work with the orchestrator absent. Change one,
-change the other.
-
-### Joining a run another skill started
-
-When `orchestrate-literature-review` is driving, it **hands you the run folder**
-— use that path verbatim and skip the rest of this section.
-
-On your own, you have to find it. The upstream skills — `generate-search-queries`,
-the `search-*` connectors — are installed separately and share no state with this
-one, so the run folder is discovered on disk, never carried in memory. This skill
-is rarely the first to write, so look before creating anything:
-
-```bash
-ls -d reviews/*/ 2>/dev/null && head -1 reviews/*/README.md
-```
-
-Then, in order:
-
-1. **An orchestrator or the user named a folder** — use it, full stop. An
-   explicit path always wins.
-2. **A run folder exists whose `README.md` first line is this research question**
-   — that is the run. Reuse it, whatever its date.
-3. **A run folder was created earlier in this session** — reuse it. The path you
-   printed when you created it is the handle; do not re-derive the slug, since a
-   question paraphrased twice slugifies twice.
-4. **Nothing matches** — create the folder and its `README.md`, and print the
-   path in your next message. That line is what the next skill, and the user,
-   will refer back to.
-
-Never create a second folder for a question that already has one, and never
-suffix `-2`. Two folders for one review is the failure this convention exists to
-prevent — worse than the flat directory, because the evidence is now split.
-
-The `README.md` first line is the join key, so it is written **verbatim from the
-user's question** and never edited afterwards. Refine the question mid-run and
-you have started a different review; say so and open a new folder deliberately.
-
-### README.md — the run manifest
-
-Write it when the folder is created, update it when the run ends. It is the only
-prose file the pipeline always produces, and it is what makes the folder
-readable without opening a single JSON:
-
-```markdown
-# <research question, verbatim>
-
-- Started: 2026-08-26 · Completed: 2026-08-26
-- Sources: openalex, hal
-- Retrieved 412 → deduplicated 337 → screened 337 → included 41
-- Synthesis: thematic (`06-synthesis/synthesize_papers_thematic.json`)
-- Stages run: 00-strategy, 01-corpus, 02-screening, 03-summaries, 06-synthesis
-
-## Notes
-Exclusions concentrated on non-empirical position papers; see the screening log.
-```
-
-Counts go in the README, never in a file name.
+One record, one file, one stage. Never concatenate several records into one
+file, and never put counts, dates, or a word such as `final` in a filename.
 
 ---
 
@@ -291,7 +179,7 @@ The script does one thing: check the JSON you produced against a task's schema.
 ```bash
 uv run ./skills/synthesize-literature/scripts/cli.py \
   --task screen_study_prisma \
-  --json-file reviews/2026-08-26-tool-augmented-llm-agents/02-screening/openalex-w2741809807.json
+  --json-file ./openalex-w2741809807.json
 ```
 
 Returns `{"valid": true, "errors": []}` or `{"valid": false, "errors": [...]}`,
@@ -347,9 +235,9 @@ synthesize-literature            ← this skill
   synthesize_papers_*            ← 5. thematic / chronological / methodological / PRISMA
 ```
 
-Retrieval writes into `01-corpus/` of the same run folder, so the whole review —
-queries, records, decisions, synthesis — is one directory an agent or a human
-can read end to end.
+That chain is data compatibility, not a sequence this skill drives: whether the
+upstream steps ran, and where anything is stored, is the calling agent's
+business.
 
 The retrieval skills all emit the common record schema, so `title`, `abstract`
 and `doi` feed the screening and summarization tasks directly. Merge and
@@ -360,17 +248,13 @@ a PRISMA synthesis is the goal, since `synthesize_papers_prisma` requires it.
 
 ## Rules
 
-- Locate or create the run folder before the first task — see **Joining a run
-  another skill started** — and write every file inside it, at the stage path
-  defined in **Where outputs go**. A file written to the
-  working directory root is a bug, whatever it contains.
 - Execute one task at a time.
 - Return JSON only — no markdown, no commentary outside the JSON object.
 - Validate each output before moving to the next step.
 - Retry at most 2 times on schema validation failure, then stop and report the error.
-- Write one JSON file per record per stage, keyed on `<source>-<id>`; never
-  concatenate several records into one file, and never overwrite a stage's
-  output with the next stage's.
+- When persisting, write one JSON file per record per stage, keyed on
+  `<source>-<id>`; never concatenate several records into one file, and never
+  overwrite a stage's output with the next stage's.
 - If information is absent from the input, use `null` — never invent values.
 
 ---
@@ -380,10 +264,7 @@ a PRISMA synthesis is the goal, since `synthesize_papers_prisma` requires it.
 - **Validation failure**: re-prompt the LLM with the schema error message. Max 2 retries, then stop.
 - **Abstract unavailable**: screen and summarize on title only — log `"abstract": null` in the record.
 - **Schema not found**: check that the task name matches exactly (snake_case, no typos).
-- **Run folder already exists**: a re-run on the same day and question resumes
-  it — re-validate what is there, write only what is missing. Never start
-  `…-tool-augmented-llm-agents-2/`.
 - **Record with no identifier**: key the file on a slug of its title, truncated
-  to 60 characters, and record the collision risk in `README.md`.
+  to 60 characters, and report the collision risk to the caller.
 
 See `./references/ARCHITECTURE.md` for the full contract design rationale.

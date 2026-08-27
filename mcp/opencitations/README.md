@@ -380,12 +380,13 @@ curl -sD- -o /dev/null -X POST http://localhost:8018/mcp \
 
 ## Browser demo / Hugging Face Space
 
-[`demo/`](demo/) holds a **standalone** Gradio app that re-implements
-`get_citation_counts` and `get_citations` against the same upstream and wraps
-them in a browser UI, with tighter clamps (25 results, 2 000-edge listing
-threshold).
-
-See this [README file](./demo/README.md)
+[`demo/`](demo/) holds a **standalone** Gradio app that re-implements **every**
+tool of `mcp_server.py` — `get_citation_counts`, `get_citations`,
+`get_references`, `lookup_metadata` and `list_works_by_person` — against the
+same upstream and wraps them in a browser UI. Same names, same response shape;
+only the argument surface and the result caps may be narrower, and each
+narrowing is stated in the tool docstring and in
+[`demo/README.md`](./demo/README.md). Change one, change the other.
 
 ---
 

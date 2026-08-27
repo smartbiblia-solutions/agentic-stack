@@ -11,7 +11,7 @@ This document describes a contract-based, host-LLM evidence synthesis pipeline a
 
 ## Pipeline (end-to-end)
 
-0. Orchestration (external skill: `orchestrate-literature-review`, optional)
+0. Orchestration (the calling agent — see `agents/literature-research-agent/AGENTS.md`)
 1. Query strategy design (external skill: `generate-search-queries`)
 2. Retrieval (external connectors; OpenAlex/HAL/PubMed/WoS)
 3. Deduplication (optional)
@@ -32,17 +32,14 @@ This document describes a contract-based, host-LLM evidence synthesis pipeline a
 
 ## Run artifacts
 
-A pipeline execution is a directory, not a pile of files: one dated run folder
-per research question, one numbered subfolder per stage above, one JSON per
-record named on its `<source>-<id>` key at every stage it passes through. The
-normative layout is `## Where outputs go` in `SKILL.md`.
+This skill produces JSON objects, not a directory. Each task returns one
+schema-validated object keyed on the record's `<source>-<id>`; the caller
+decides whether it is persisted and where. `## Artifact contract` in `SKILL.md`
+states the record key and the relative destinations a caller may ask for.
 
-The stages are owned by different skills, installed separately and sharing no
-state, so the convention is **duplicated** into each of them rather than
-referenced from one place. `skills/orchestrate-literature-review/SKILL.md` is the
-canonical statement — it also owns the end-to-end sequence and hands the run
-folder to each stage — and `skills/generate-search-queries/SKILL.md` repeats it
-under `## Where the output goes`. A skill joins a run by
-reading the disk: `reviews/<run>/README.md`, whose first line is the research
-question verbatim, is the join key. Change the rule in one skill, change it in
-the others in the same commit.
+Workspace ownership sits one level up, in the agent instructions —
+`agents/literature-research-agent/AGENTS.md` is the example: it creates the
+research directory, holds it constant across stages, places artifacts, merges
+and deduplicates the corpus, and maintains the human-readable manifest. No skill
+here opens a workspace or looks for one on disk, so every stage stays usable on
+its own with no agent instructions present.

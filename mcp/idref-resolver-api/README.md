@@ -333,11 +333,12 @@ curl -i http://localhost:8015/sse    # sse
 
 ## Browser demo / Hugging Face Space
 
-[`demo/`](demo/) holds a **standalone** Gradio app that re-implements
-`align_person` against the same upstream and wraps them in a browser
-UI. It imports nothing from this folder: `demo/` is the Space root, so
-`mcp_server.py` does not exist there. Those tools are a hand-kept copy — same
-names, same arguments, same response shape. Change one, change the other.
+[`demo/`](demo/) holds a **standalone** Gradio app that re-implements **every**
+tool of `mcp_server.py` — `align_person` — against the same upstream and wraps
+them in a browser UI. Same names, same response shape; only the argument surface
+and the result caps may be narrower, and each narrowing is stated in the tool
+docstring and in [`demo/README.md`](./demo/README.md). Change one, change the
+other.
 
 ```bash
 cd demo
@@ -347,8 +348,8 @@ uv run --with 'gradio[mcp]>=6,<7' --with httpx app.py
 
 Launched with `mcp_server=True`, it also serves its tool at
 `/gradio_api/mcp/sse`. That endpoint is **demo-grade and secondary** — the
-canonical MCP endpoint is `mcp_server.py`, with the full tool set and no
-tightened result limits. Set `GRADIO_MCP_SERVER=false` wherever the real server
+canonical MCP endpoint is `mcp_server.py`, with the untightened result limits
+and the full argument surface. Set `GRADIO_MCP_SERVER=false` wherever the real server
 is already reachable, so clients cannot bind to the wrong one.
 
 Check what it exposes:

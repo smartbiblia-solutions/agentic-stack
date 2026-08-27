@@ -76,7 +76,7 @@ La sortie JSON a cette forme :
   "catalog_version": 2,
   "source": "https://github.com/smartbiblia-solutions/agentic-stack",
   "branch": "main",
-  "returned": 15,
+  "returned": 19,
   "entries": [
     {
       "kind": "skill",
@@ -92,7 +92,9 @@ La sortie JSON a cette forme :
 }
 ```
 
-`alias` est ce qu'on passe en ligne de commande, `name` le dossier créé.
+`returned` vaut le nombre d'entrées du catalogue au moment de l'appel — le
+catalogue fait foi, ne pas lire un total figé dans cet exemple. `alias` est ce
+qu'on passe en ligne de commande, `name` le dossier créé.
 `ambiguous: true` signale un nom qui désigne à la fois une skill et un serveur
 MCP : ces entrées-là exigent `--kind`. Les entrées MCP portent en plus
 `entrypoint`, `port`, `env` et `env_required`.
@@ -197,6 +199,6 @@ la déclarent dans `smartbiblia info <nom>`.
 | Document | Contenu |
 |---|---|
 | [`../README.md`](../README.md) | Le dépôt, la liste des skills, les conventions communes *(en)* |
-| [`../mcp/README.md`](../mcp/README.md) | Les serveurs MCP avec leus instructions d'installation *(en)* |
+| [`../mcp/README.md`](../mcp/README.md) | Les serveurs MCP avec leurs instructions d'installation *(en)* |
 | [`../INSTALL_FOR_AGENTS.md`](../INSTALL_FOR_AGENTS.md) | Le runbook d'installation, pour être exécuté par un agent *(en)* |
 | `../skills/<skill>/SKILL.md` | Ce que fait une skill, quand l'utiliser, ce qu'elle renvoie |
