@@ -5,7 +5,7 @@ An [MCP](https://modelcontextprotocol.io) server that gives AI agents access to
 national research data repository, built on
 [Dataverse](https://dataverse.org). It wraps the public read endpoints of the
 [Dataverse Native API](https://guides.dataverse.org/en/latest/api/native-api.html):
-Search, Metrics, and metadata blocks.
+Search, Metrics, metadata blocks, and collection, dataset and file retrieval.
 
 ## Tools
 
@@ -14,6 +14,10 @@ Search, Metrics, and metadata blocks.
 | `search` | Search datasets, dataverses and files, with type filters, subtree scoping, facets, sorting and pagination. |
 | `metrics` | Fetch repository usage metrics (datasets, downloads, unique downloads, tree…), optionally broken down by month, past days or category. Also exposes Make Data Count metrics. |
 | `metadatablocks` | List the repository's metadata blocks, or retrieve the full schema of one block. |
+| `get_collection` | Retrieve one collection by alias or numeric id — name, affiliation, parent, contacts — and count the datasets and sub-collections held anywhere beneath it. |
+| `list_collection_contents` | List a collection's direct children, sub-collections and datasets, one hop down the tree. |
+| `get_dataset` | Retrieve the latest published version of a dataset by DOI: title, authors, description, subjects, dates, licence, file count. |
+| `list_dataset_files` | List the files of a dataset version, with content types, sizes, checksums and public download URLs. |
 
 **No API key is required** — the server only reads public endpoints.
 
@@ -34,6 +38,11 @@ Once the server is connected, these are the kinds of request it answers:
 - *"How many datasets does the repository hold, and how many were published each month in 2024?"* → `metrics`
 - *"How many downloads, and how many unique downloads, over the past 30 days?"* → `metrics`
 - *"Which metadata blocks exist, and what fields does the citation block define?"* → `metadatablocks`
+- *"How many datasets are there in the École des Ponts collection?"* → `get_collection` with `identifier: "ecoledesponts"`
+- *"What sits directly inside the INRAE collection?"* → `list_collection_contents`
+- *"Give me the full record behind this DOI."* → `get_dataset`
+- *"What files does that dataset contain, how big are they, and where do I download them?"* → `list_dataset_files`
+- *"Which collections does the repository hold, and what are their aliases?"* → `search` with `types: ["dataverse"]`, reading each hit's `identifier`
 
 ---
 
@@ -276,6 +285,18 @@ curl -i http://localhost:8014/sse    # sse
 
 - **Empty results** — the default `q` is `*`; narrow with `q` and `types`
   (`dataset`, `dataverse`, `file`) rather than assuming the record is absent.
+- **`error: "HTTP 404 …"` from a lookup tool** — the alias, the numeric id or the
+  persistent id does not exist. Collection aliases come from the `identifier`
+  field of a `types: ["dataverse"]` search hit. The four lookup and listing tools
+  answer with `error` and empty `results` rather than raising; `search` and the
+  two older tools still raise.
+- **A listing looks truncated** — `list_collection_contents` and
+  `list_dataset_files` wrap endpoints that neither paginate nor honour a limit,
+  so the cap is applied here: compare `returned` with `total_found`, check
+  `truncated`, and raise `max_items`.
+- **A dataset from `list_collection_contents` has no title** — that endpoint
+  carries none. Pass its `persistent_id` to `get_dataset`, or list the same
+  collection through `search` with `subtree`, which does return titles.
 - **`metrics` raises on `breakdown`** — `pastDays` and `toMonth` both require a
   `value` (a number of days, or a `YYYY-MM` month).
 - **Unknown category or metric** — `category` must be one of `dataverses`,
@@ -294,8 +315,9 @@ curl -i http://localhost:8014/sse    # sse
 ## Browser demo / Hugging Face Space
 
 [`demo/`](demo/) holds a **standalone** Gradio app that re-implements **every**
-tool of `mcp_server.py` — `search`, `metrics` and `metadatablocks` — against the
-same upstream and wraps them in a browser UI. Same names, same response shape;
+tool of `mcp_server.py` — `search`, `metrics`, `metadatablocks`,
+`get_collection`, `list_collection_contents`, `get_dataset` and
+`list_dataset_files` — against the same upstream and wraps them in a browser UI. Same names, same response shape;
 only the argument surface and the result caps may be narrower, and each
 narrowing is stated in the tool docstring and in
 [`demo/README.md`](./demo/README.md). Change one, change the other.

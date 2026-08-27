@@ -15,10 +15,11 @@ short_description: Search French research datasets through the recherche-data-go
 A standalone Gradio demo of the
 [`recherche-data-gouv`](https://github.com/smartbiblia-solutions/agentic-stack/tree/main/mcp/recherche-data-gouv)
 MCP server: search the French national research data repository (a Dataverse
-instance), or read its usage metrics.
+instance), browse its collections, read a dataset and its files, or look at its
+usage metrics.
 
 The **canonical MCP endpoint is `mcp_server.py`** one folder up, with the full
-argument lists and no tightened result limit. This app exposes the same three
+argument lists and no tightened result limit. This app exposes the same seven
 tools at `/gradio_api/mcp/`; that endpoint is demo-grade and secondary. Set
 `GRADIO_MCP_SERVER=false` wherever the real server is reachable, so clients
 cannot bind to the wrong one.
@@ -28,14 +29,26 @@ cannot bind to the wrong one.
 | `search` | Solr search over datasets, dataverses and files |
 | `metrics` | Dataverse Metrics counters, total or broken down |
 | `metadatablocks` | The instance's metadata blocks, or one block schema |
+| `get_collection` | One collection by alias or numeric id, with recursive dataset and sub-collection counts |
+| `list_collection_contents` | A collection's direct children: sub-collections and datasets |
+| `get_dataset` | The latest published version of a dataset, by DOI |
+| `list_dataset_files` | The files of a dataset version, with sizes, checksums and download URLs |
 
 ## Deliberate narrowings
 
-Two deliberate narrowings, both documented in the tool docstrings: `per_page` is
-clamped to 10 instead of 1000, and each tool keeps the handful of arguments a
-browser form can express (`search` drops `filters`, `subtree`, `sort`, facets and
-entity ids; `metrics` drops `parent_alias`, `data_location`, `country` and the
-Make Data Count family). Everything kept behaves exactly as it does upstream.
+Two kinds of narrowing, both documented in the tool docstrings. **Result caps:**
+`per_page` is clamped to 10 instead of 1000, and `max_items` on the two listing
+tools to 25 instead of unbounded. **Argument surface:** each tool keeps the
+handful of arguments a browser form can express — `search` drops `filters`,
+`subtree`, `sort`, facets and entity ids; `metrics` drops `parent_alias`,
+`data_location`, `country` and the Make Data Count family; `get_dataset` drops
+`include_raw`, whose payload embeds every metadata block and the whole file
+list. Everything kept behaves exactly as it does upstream.
+
+`list_collection_contents` and `list_dataset_files` wrap endpoints that neither
+paginate nor honour a limit, so the cap is applied after the download, here:
+`total_found` is always the untruncated count and `truncated` says whether the
+cap bit.
 
 A note on the metrics breakdowns: `bySubject` and `monthly` exist on `datasets`,
 `byCategory` on `dataverses`, `byType` on `files`. The other combinations answer

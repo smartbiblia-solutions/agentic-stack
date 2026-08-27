@@ -92,6 +92,7 @@ args = _parse_args()
 BASE_URL = args.base_url.rstrip("/")
 if not BASE_URL.endswith("/api"):
     BASE_URL = f"{BASE_URL}/api"
+SITE_URL = BASE_URL[: -len("/api")]  # the web UI root, for human-facing links
 HTTP_TIMEOUT = args.http_timeout
 MAX_RETRIES = max(1, args.max_retries)
 BACKOFF_BASE = max(0.0, args.backoff_base)
@@ -243,7 +244,22 @@ async def search(
     show_entity_ids: bool = False,
     trace: bool | None = None,
 ) -> dict[str, Any]:
-    """Search public Recherche Data Gouv Dataverse records."""
+    """Search public Recherche Data Gouv Dataverse records: datasets, collections and files.
+
+    `q` is Solr syntax — free text, or a field such as `authorName:"Dupont"` or
+    `subject:"Agricultural Sciences"`. `types` restricts to "dataset",
+    "dataverse" and/or "file"; `filters` are Solr `fq` clauses.
+
+    `subtree` scopes the search to one or more collections **and everything
+    beneath them**, recursively: subtree=["inrae"] reaches all 849 of its
+    sub-collections. That is what counts a collection's holdings — q="*",
+    subtree=["ecoledesponts"], types=["dataset"], per_page=1 returns the count in
+    `total_found` without downloading the records. get_collection reports the
+    same two numbers directly.
+
+    Collection aliases for `subtree` come from the `identifier` field of a
+    types=["dataverse"] hit.
+    """
     params: list[tuple[str, str]] = [("q", q), ("per_page", str(per_page)), ("start", str(start))]
     _add_repeated(params, "type", types)
     _add_repeated(params, "fq", filters)
@@ -369,6 +385,389 @@ async def metadatablocks(block: str | None = None, trace: bool | None = None) ->
     if include_trace:
         out["trace"] = trace_events
     return out
+
+
+# --- Native API: collections, datasets, files --------------------------------
+#
+# Everything below is a public GET. Unknown aliases and unknown persistent ids
+# are ordinary answers from this repository's point of view, so they come back
+# as an `error` string next to empty results rather than as a transport failure.
+
+
+def _error_out(command: str, exc: Exception, trace_events: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
+    if isinstance(exc, httpx.HTTPStatusError):
+        message = f"HTTP {exc.response.status_code} on {exc.request.url}"
+    elif isinstance(exc, httpx.TimeoutException):
+        message = f"timeout: {exc}"
+    else:
+        message = str(exc)
+    out: dict[str, Any] = {
+        "source": "recherche-data-gouv",
+        "command": command,
+        "total_found": None,
+        "returned": 0,
+        "results": [],
+        "error": message,
+    }
+    out.update(extra)
+    if trace_events:
+        out["trace"] = trace_events
+    return out
+
+
+def _ok_out(command: str, results: list[dict[str, Any]], total_found: int | None, trace_events: list[dict[str, Any]], include_trace: bool, **extra: Any) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "source": "recherche-data-gouv",
+        "command": command,
+        "total_found": total_found,
+        "returned": len(results),
+        "results": results,
+        "error": None,
+    }
+    out.update(extra)
+    if include_trace:
+        out["trace"] = trace_events
+    return out
+
+
+def _normalize_collection(item: dict[str, Any]) -> dict[str, Any]:
+    alias = item.get("alias")
+    parent = item.get("isPartOf") if isinstance(item.get("isPartOf"), dict) else {}
+    return {
+        "source": "recherche-data-gouv",
+        "type": "dataverse",
+        "id": alias or item.get("id"),
+        "entity_id": item.get("id"),
+        "alias": alias,
+        "name": item.get("name"),
+        "affiliation": item.get("affiliation"),
+        "description": item.get("description"),
+        "url": f"{SITE_URL}/dataverse/{alias}" if alias else None,
+        "parent_alias": parent.get("identifier"),
+        "parent_name": parent.get("displayName"),
+        "dataverse_type": item.get("dataverseType"),
+        "creation_date": item.get("creationDate"),
+        "contacts": [
+            c.get("contactEmail")
+            for c in item.get("dataverseContacts") or []
+            if isinstance(c, dict) and c.get("contactEmail")
+        ],
+        "raw": item,
+    }
+
+
+async def _subtree_total(alias: str, item_type: str, trace: bool) -> tuple[int | None, list[dict[str, Any]]]:
+    """How many published objects of one type sit anywhere under a collection."""
+    data, events = await _get_json(
+        "search",
+        [("q", "*"), ("subtree", alias), ("type", item_type), ("per_page", "1")],
+        trace=trace,
+    )
+    payload = data.get("data", {}) if isinstance(data, dict) else {}
+    return payload.get("total_count"), events
+
+
+@mcp.tool
+async def get_collection(
+    identifier: str,
+    include_counts: bool = True,
+    trace: bool | None = None,
+) -> dict[str, Any]:
+    """Retrieve one Dataverse collection by alias or numeric id.
+
+    `identifier` is an alias such as "ecoledesponts", "inrae" or "root", or the
+    numeric id that list_collection_contents returns for a sub-collection.
+    Returns the collection's identity card: name, affiliation, description,
+    contacts, parent collection.
+
+    With include_counts (the default) it also reports how many published
+    datasets and sub-collections sit anywhere beneath it — that is what answers
+    "how many datasets does this collection hold?". The counts are recursive:
+    they include everything in the sub-tree, not just direct children.
+
+    Aliases come from search(types=["dataverse"]) — the `identifier` field of
+    each hit.
+    """
+    include_trace = TRACE_DEFAULT if trace is None else trace
+    events: list[dict[str, Any]] = []
+    try:
+        data, ev = await _get_json(f"dataverses/{identifier}", [], trace=include_trace)
+        events += ev
+        record = _normalize_collection(data.get("data", {}) if isinstance(data, dict) else {})
+        if include_counts:
+            alias = record.get("alias") or identifier
+            datasets, ev = await _subtree_total(str(alias), "dataset", include_trace)
+            events += ev
+            collections, ev = await _subtree_total(str(alias), "dataverse", include_trace)
+            events += ev
+            record["dataset_count"] = datasets
+            record["subcollection_count"] = collections
+    except Exception as exc:  # noqa: BLE001 — upstream failures are data here
+        return _error_out("get_collection", exc, events, identifier=identifier)
+
+    return _ok_out(
+        "get_collection", [record], 1, events, include_trace, identifier=identifier
+    )
+
+
+def _normalize_content_entry(item: dict[str, Any]) -> dict[str, Any]:
+    if item.get("type") == "dataset":
+        protocol = item.get("protocol")
+        authority = item.get("authority")
+        identifier = item.get("identifier")
+        pid = f"{protocol}:{authority}/{identifier}" if protocol and authority and identifier else None
+        return {
+            "source": "recherche-data-gouv",
+            "type": "dataset",
+            "id": pid or item.get("id"),
+            "entity_id": item.get("id"),
+            "persistent_id": pid,
+            "title": None,  # /contents carries no dataset titles; see the docstring
+            "url": item.get("persistentUrl"),
+            "publication_date": item.get("publicationDate"),
+            "publisher": item.get("publisher"),
+            "raw": item,
+        }
+    return {
+        "source": "recherche-data-gouv",
+        "type": "dataverse",
+        "id": item.get("id"),
+        "entity_id": item.get("id"),
+        "title": item.get("title"),
+        "name": item.get("title"),
+        "url": None,  # /contents carries no alias, and the web URL needs one
+        "raw": item,
+    }
+
+
+@mcp.tool
+async def list_collection_contents(
+    identifier: str,
+    item_type: str | None = None,
+    max_items: int = 50,
+    trace: bool | None = None,
+) -> dict[str, Any]:
+    """List the direct children of a Dataverse collection: sub-collections and datasets.
+
+    `identifier` is an alias ("ecoledesponts") or a numeric id. `item_type`
+    keeps only one kind, "dataverse" or "dataset"; omit it for both.
+
+    This is one hop down the tree, not the whole sub-tree. Two properties of the
+    upstream endpoint are worth knowing before choosing it:
+
+    - It has no pagination and ignores any limit, so the whole child list is
+      downloaded and `max_items` clamps it here. `total_found` is the untruncated
+      count.
+    - Dataset entries carry a DOI but no title, and sub-collection entries carry
+      a numeric id but no alias. Feed either back into get_collection or
+      get_dataset to resolve them.
+
+    For a titled, paginated, recursive listing instead, use
+    search(q="*", subtree="<alias>", types=["dataset"]).
+    """
+    include_trace = TRACE_DEFAULT if trace is None else trace
+    if item_type is not None and item_type not in {"dataverse", "dataset"}:
+        return _error_out(
+            "list_collection_contents",
+            ValueError('item_type must be "dataverse", "dataset", or omitted'),
+            [],
+            identifier=identifier,
+        )
+    try:
+        data, events = await _get_json(f"dataverses/{identifier}/contents", [], trace=include_trace)
+    except Exception as exc:  # noqa: BLE001
+        return _error_out("list_collection_contents", exc, [], identifier=identifier)
+
+    items = data.get("data") if isinstance(data, dict) else None
+    items = [i for i in (items or []) if isinstance(i, dict)]
+    if item_type:
+        items = [i for i in items if i.get("type") == item_type]
+    total = len(items)
+    capped = items[: max(0, max_items)]
+    return _ok_out(
+        "list_collection_contents",
+        [_normalize_content_entry(i) for i in capped],
+        total,
+        events,
+        include_trace,
+        identifier=identifier,
+        item_type=item_type,
+        truncated=total > len(capped),
+    )
+
+
+def _cit_primitive(fields: dict[str, Any], name: str) -> str | None:
+    value = (fields.get(name) or {}).get("value")
+    return value if isinstance(value, str) else None
+
+
+def _cit_compound(fields: dict[str, Any], name: str, *keys: str) -> list[dict[str, Any]]:
+    rows = (fields.get(name) or {}).get("value")
+    out: list[dict[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        entry = {k: (row.get(k) or {}).get("value") for k in keys}
+        if any(v for v in entry.values()):
+            out.append(entry)
+    return out
+
+
+def _normalize_dataset(data: dict[str, Any]) -> dict[str, Any]:
+    version = data.get("latestVersion") or {}
+    blocks = version.get("metadataBlocks") or {}
+    fields = {
+        f.get("typeName"): f
+        for f in (blocks.get("citation") or {}).get("fields", [])
+        if isinstance(f, dict)
+    }
+    subjects = (fields.get("subject") or {}).get("value")
+    descriptions = [
+        d.get("dsDescriptionValue")
+        for d in _cit_compound(fields, "dsDescription", "dsDescriptionValue")
+    ]
+    license_ = version.get("license")
+    if isinstance(license_, dict):
+        license_ = license_.get("name")
+    return {
+        "source": "recherche-data-gouv",
+        "type": "dataset",
+        "id": version.get("datasetPersistentId") or data.get("persistentUrl"),
+        "entity_id": data.get("id"),
+        "persistent_id": version.get("datasetPersistentId"),
+        "title": _cit_primitive(fields, "title"),
+        "authors": _cit_compound(fields, "author", "authorName", "authorAffiliation", "authorIdentifier"),
+        "description": "\n\n".join(d for d in descriptions if d) or None,
+        "subjects": subjects if isinstance(subjects, list) else [],
+        "keywords": [k.get("keywordValue") for k in _cit_compound(fields, "keyword", "keywordValue")],
+        "url": data.get("persistentUrl"),
+        "publisher": data.get("publisher"),
+        "publication_date": data.get("publicationDate"),
+        "deposit_date": _cit_primitive(fields, "dateOfDeposit"),
+        "depositor": _cit_primitive(fields, "depositor"),
+        "production_date": _cit_primitive(fields, "productionDate"),
+        "language": (fields.get("language") or {}).get("value"),
+        "version": f"{version.get('versionNumber')}.{version.get('versionMinorNumber')}",
+        "version_state": version.get("versionState"),
+        "last_update": version.get("lastUpdateTime"),
+        "license": license_,
+        "terms_of_use": version.get("termsOfUse"),
+        "file_count": len(version.get("files") or []),
+        "metadata_blocks": sorted(blocks.keys()),
+    }
+
+
+@mcp.tool
+async def get_dataset(
+    persistent_id: str,
+    include_raw: bool = False,
+    trace: bool | None = None,
+) -> dict[str, Any]:
+    """Retrieve the latest published version of one dataset by its persistent id.
+
+    `persistent_id` is the DOI in Dataverse form, e.g. "doi:10.57745/AJT1Z3" —
+    the `global_id` of a search hit, or the `persistent_id` of a
+    list_collection_contents entry.
+
+    Returns the normalized record: title, authors, description, subjects,
+    keywords, dates, version, licence or terms, file count, and which metadata
+    blocks the deposit fills. Use list_dataset_files for the files themselves.
+
+    include_raw attaches the untouched upstream payload. It is off by default
+    because that payload runs to tens of kilobytes — it embeds every metadata
+    block and the whole file list.
+    """
+    include_trace = TRACE_DEFAULT if trace is None else trace
+    try:
+        data, events = await _get_json(
+            "datasets/:persistentId/", [("persistentId", persistent_id)], trace=include_trace
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _error_out("get_dataset", exc, [], persistent_id=persistent_id)
+
+    payload = data.get("data", {}) if isinstance(data, dict) else {}
+    record = _normalize_dataset(payload)
+    if include_raw:
+        record["raw"] = payload
+    return _ok_out(
+        "get_dataset", [record], 1, events, include_trace, persistent_id=persistent_id
+    )
+
+
+def _normalize_file(item: dict[str, Any]) -> dict[str, Any]:
+    data_file = item.get("dataFile") or {}
+    file_id = data_file.get("id")
+    checksum = data_file.get("checksum") or {}
+    return {
+        "source": "recherche-data-gouv",
+        "type": "file",
+        "id": file_id,
+        "label": item.get("label"),
+        "filename": data_file.get("filename"),
+        "description": item.get("description") or data_file.get("description"),
+        "content_type": data_file.get("contentType"),
+        "size_bytes": data_file.get("filesize"),
+        "categories": item.get("categories") or [],
+        "restricted": item.get("restricted"),
+        "persistent_id": data_file.get("persistentId"),
+        "url": data_file.get("pidURL"),
+        "download_url": f"{BASE_URL}/access/datafile/{file_id}" if file_id else None,
+        "checksum_type": checksum.get("type"),
+        "checksum": checksum.get("value"),
+        "creation_date": data_file.get("creationDate"),
+        "raw": item,
+    }
+
+
+@mcp.tool
+async def list_dataset_files(
+    persistent_id: str,
+    version: str = ":latest-published",
+    max_items: int = 50,
+    trace: bool | None = None,
+) -> dict[str, Any]:
+    """List the files of one dataset version, with sizes, checksums and download URLs.
+
+    `persistent_id` is the DOI in Dataverse form, e.g. "doi:10.57745/AJT1Z3".
+    `version` accepts ":latest-published" (the default) or an explicit number
+    such as "1.0"; draft versions need a credential and are out of reach here.
+
+    Like the collection listing, the upstream endpoint neither paginates nor
+    honours a limit, so `max_items` clamps the download here and `total_found`
+    reports the untruncated count.
+
+    `download_url` is the public bytes endpoint. This server never fetches it —
+    a file is for the caller to download, not for an MCP payload.
+    """
+    include_trace = TRACE_DEFAULT if trace is None else trace
+    try:
+        data, events = await _get_json(
+            f"datasets/:persistentId/versions/{version}/files",
+            [("persistentId", persistent_id)],
+            trace=include_trace,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _error_out(
+            "list_dataset_files", exc, [], persistent_id=persistent_id, version=version
+        )
+
+    items = data.get("data") if isinstance(data, dict) else None
+    items = [i for i in (items or []) if isinstance(i, dict)]
+    total = len(items)
+    capped = items[: max(0, max_items)]
+    return _ok_out(
+        "list_dataset_files",
+        [_normalize_file(i) for i in capped],
+        total,
+        events,
+        include_trace,
+        persistent_id=persistent_id,
+        version=version,
+        total_size_bytes=sum(
+            (i.get("dataFile") or {}).get("filesize") or 0 for i in items
+        ),
+        truncated=total > len(capped),
+    )
 
 
 if __name__ == "__main__":
