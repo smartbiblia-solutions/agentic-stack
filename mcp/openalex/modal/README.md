@@ -15,6 +15,10 @@ same envelope:
 - `lookup_by_doi`
 - `get_citing_works`
 - `classify_text`
+- `resolve_entity`
+- `browse_topics`
+- `group_by`
+- `translate_query`
 
 The copy is **hand-kept**, exactly like `../demo/`: change a tool in
 `../mcp_server.py` and change it here in the same commit. Nothing enforces it —
@@ -85,7 +89,8 @@ modal secret create smartbiblia-openalex OPENALEX_API_KEY=...
 
 | Variable | Required | Meaning |
 |---|---|---|
-| `OPENALEX_API_KEY` | no | Polite-pool key. Raises the rate limit; the server works without it. |
+| `OPENALEX_API_KEY` | no | Raises the daily OpenAlex budget from $0.10 to $1.00. The server works without it. |
+| `OPENALEX_API_URL` | no | API base, for a mirror or a proxy. Defaults to `https://api.openalex.org`. |
 
 `SECRETS` is empty in `mcp_server_stateless.py` and the deployment works as is;
 uncomment the `modal.Secret.from_name(...)` line once the Secret exists.
@@ -110,8 +115,12 @@ once, which is what the pooled `httpx` client built in `make_mcp_server()` is fo
 ## Cost and exposure
 
 A Modal web endpoint is **public by default** — anyone with the URL can call the
-tools, and every call spends your Modal credits and the upstream's rate limit
-from an IP the upstream attributes to you.
+tools, and every call spends your Modal credits **and your OpenAlex daily
+budget**, which since February 2026 is metered per key ($1.00/day) or per IP
+($0.10/day anonymous). One deployment shares one budget across all its visitors,
+so a public endpoint on your key is a public endpoint on your quota: leave
+`SECRETS` empty for an open demo, and set the Secret only on a deployment you
+control access to.
 
 Containers scale to zero when idle, so an unused deployment costs nothing but
 adds a cold start (image pull plus building the FastMCP server) to the first

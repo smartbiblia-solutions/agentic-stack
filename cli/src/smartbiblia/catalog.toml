@@ -46,10 +46,10 @@ tags = ["repository", "french", "open-access", "hal"]
 
 [skills.openalex]
 name = "search-works-openalex"
-description = "Recherche par mots-clés ou par le sens dans OpenAlex, la plus grande base bibliographique mondiale en accès ouvert"
+description = "Recherche par mots-clés ou par le sens dans OpenAlex, la plus grande base bibliographique mondiale en accès ouvert : résolution d'entités (institutions, topics), hiérarchie disciplinaire, comptages et traduction de requêtes OQL"
 path = "skills/search-works-openalex"
 maturity = "stable"
-tags = ["global", "open-access", "openalex", "doi"]
+tags = ["global", "open-access", "openalex", "doi", "topics", "institutions", "bibliometrics"]
 
 [skills.generate-queries]
 name = "generate-search-queries"
@@ -64,13 +64,6 @@ description = "Synthèse de littérature académique (screening PRISMA, résumé
 path = "skills/synthesize-literature"
 maturity = "stable"
 tags = ["synthesis", "review", "prisma", "literature"]
-
-[skills.review]
-name = "orchestrate-literature-review"
-description = "Pipeline complet de revue de littérature : dossier de run daté unique, stratégie de recherche, interrogation des sources, déduplication, screening PRISMA, résumés, appréciation qualité et synthèse — chaque étape déléguée à sa propre skill"
-path = "skills/orchestrate-literature-review"
-maturity = "experimental"
-tags = ["literature-review", "orchestration", "prisma", "pipeline"]
 
 [skills.theses]
 name = "search-theses-fr"
@@ -109,14 +102,14 @@ tags = ["dmp", "fair", "open-science", "research"]
 
 [mcp.openalex]
 name = "openalex"
-description = "Serveur MCP OpenAlex : recherche d'œuvres par mots-clés ou par le sens, résolution de DOI, citations, classification par topic"
+description = "Serveur MCP OpenAlex : recherche d'œuvres par mots-clés ou par le sens, résolution de DOI et d'entités, citations, classification par topic, hiérarchie disciplinaire, comptages group_by et traduction OQL"
 path = "mcp/openalex"
 entrypoint = "mcp_server.py"
 maturity = "stable"
 port = 8011
 env = ["OPENALEX_API_KEY"]
 env_required = []
-tags = ["global", "open-access", "openalex", "doi"]
+tags = ["global", "open-access", "openalex", "doi", "topics", "institutions", "bibliometrics"]
 
 [mcp.sudoc-sru]
 name = "sudoc-sru"
@@ -153,7 +146,7 @@ tags = ["discovery", "primo", "exlibris", "institutional"]
 
 [mcp.recherche-data-gouv]
 name = "recherche-data-gouv"
-description = "Serveur MCP Recherche Data Gouv : recherche Dataverse, métriques et blocs de métadonnées (lecture publique, sans clé)"
+description = "Serveur MCP Recherche Data Gouv : recherche Dataverse, navigation des collections, fiches de jeux de données et de fichiers, métriques et blocs de métadonnées (lecture publique, sans clé)"
 path = "mcp/recherche-data-gouv"
 entrypoint = "mcp_server.py"
 maturity = "experimental"

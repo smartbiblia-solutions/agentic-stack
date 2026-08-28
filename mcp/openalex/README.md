@@ -7,13 +7,26 @@ database (~250 million scholarly works). It wraps the
 
 ## Tools
 
-| Tool | Purpose |
-|---|---|
-| `search_works` | Keyword search with filters on date, open access, author (name or ORCID), and institution (name or ROR URL). Authors and institutions are resolved automatically. |
-| `search_semantic` | Meaning-based search: ranks works by semantic proximity to a descriptive text or an abstract, so a paper matches without sharing the words used to ask for it. |
-| `lookup_by_doi` | Resolve one or more DOIs to full OpenAlex records. Batched at 50 per request. |
-| `get_citing_works` | Fetch works that cite a given OpenAlex work, sorted by citation count. |
-| `classify_text` | Classify a title or abstract into academic topics and keywords. |
+| Tool | Purpose | Cost |
+|---|---|---|
+| `search_works` | Keyword search, with filters on date, open access, author (name or ORCID), institution (name or ROR) and the four levels of the topic hierarchy. Authors and institutions are resolved automatically. | $0.001 |
+| `search_semantic` | Meaning-based search: ranks works by semantic proximity to a descriptive text or an abstract, so a paper matches without sharing the words used to ask for it. | $0.001 |
+| `lookup_by_doi` | Resolve one or more DOIs to full OpenAlex records. Batched at 50 per request. | free |
+| `get_citing_works` | Fetch works that cite a given OpenAlex work, sorted by citation count. | $0.0001 |
+| `classify_text` | Place a text in the topic hierarchy — topics, subfields, fields, domains, each with its id and the filter key to reuse it. | $0.001 |
+| `resolve_entity` | Turn a name — institution, author, source, funder, publisher, topic — into its OpenAlex id, its external id (ROR, ORCID) **and the filter key that id belongs in**. | free |
+| `browse_topics` | Walk the aboutness hierarchy: 4 domains → 26 fields → 252 subfields → 4,516 topics. | $0.0001 |
+| `group_by` | Count along any dimension without retrieving a single record — "how many", "top N", trends, in one request. | $0.0001 |
+| `translate_query` | Convert between OpenAlex query language (OQL), its JSON form (OQO) and a REST URL, and validate a query before paying to run it. | $0.0001 |
+
+Two of them make the other seven accurate and are free, so reach for them first:
+`resolve_entity` before filtering on any name, `browse_topics` (or
+`classify_text`) before filtering on a subject. Both hand back the **filter key**
+along with the id, which is how you find out that "institution is X" belongs in
+`authorships.institutions.lineage` — the filter that also catches the labs,
+hospitals and UMRs attached to that institution — rather than in
+`authorships.institutions.id`, which does not. `search_works` filters on lineage
+by default for that reason; pass `institution_scope="exact"` to narrow.
 
 `search_semantic` wraps OpenAlex's vector search, and inherits three limits from
 that endpoint: at most 50 results with no paging past them, `total_found` always
@@ -23,6 +36,11 @@ bounds given as years — `year_from` / `year_to`, because the
 rejected. It also allows roughly one call per second. Reach for it when no
 keyword names the subject cleanly; run it alongside `search_works` and merge on
 `doi` when recall matters.
+
+`classify_text` replaces the `/text` endpoint OpenAlex retired: one semantic
+search, then the topics of the nearest works aggregated by relevance and rolled
+up the hierarchy. It costs a tenth of what `/text` did and, unlike `/text`,
+returns identifiers you can feed straight back into `search_works`.
 
 The server is a single self-contained file, `mcp_server.py`, with inline
 [PEP 723](https://peps.python.org/pep-0723/) dependencies (`fastmcp`, `httpx`)
@@ -39,7 +57,11 @@ Once the server is connected, these are the kinds of request it answers:
 - *"Here is an abstract — find papers about the same idea, even if they use none of these words."* → `search_semantic`
 - *"Resolve these twelve DOIs and tell me which ones are open access."* → `lookup_by_doi`, batched at 50 per request
 - *"Who cites 10.1038/s41586-020-2649-2? Most-cited citing papers first."* → `get_citing_works`
-- *"What topics does this title and abstract belong to?"* → `classify_text`
+- *"What is this abstract about, in OpenAlex's own vocabulary?"* → `classify_text`
+- *"What is the OpenAlex id for the Université de Strasbourg?"* → `resolve_entity`
+- *"Which subfields sit under the Computer Science field?"* → `browse_topics`
+- *"How many works has Sorbonne Université published per year since 2015, and what share is open access?"* → `group_by`, twice, with no record downloaded
+- *"Is `works where institution is Sorbonne Université and publication year > 2020` a valid query, and what REST URL does it compile to?"* → `translate_query`
 - *"Search both ways for 'urban heat island mitigation' and merge the results."* → `search_works` + `search_semantic`, deduplicated on `doi`
 
 ---
@@ -55,8 +77,15 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-**OpenAlex API key.** The API is free and open. An API key is recommended to avoid rate limits.
-See [rate limits & authentication](https://docs.openalex.org/how-to-use-the-api/rate-limits-and-authentication).
+**OpenAlex API key — optional, and worth ten times the anonymous budget.**
+Since February 2026 OpenAlex meters usage as a **daily spend** and ignores
+`mailto`; the polite pool no longer exists. Anonymous access gets **$0.10/day**,
+a free key **$1.00/day**, both resetting at midnight UTC. Single-entity lookups
+and autocomplete are free at either level, which is why `lookup_by_doi` and
+`resolve_entity` cost nothing to lean on. Every billable tool response carries
+`cost_usd`, so an agent can see what it just spent. Get a key at
+[openalex.org/pricing](https://openalex.org/pricing); see
+[authentication](https://help.openalex.org/api/authentication/).
 
 ---
 
@@ -271,7 +300,7 @@ Restart Claude Desktop after saving; tools appear under the plug icon.
 
 The API key is read from the `OPENALEX_API_KEY` environment variable only —
 never a flag, because `argv` is visible in process listings and shell history.
-It is optional for OpenAlex (it buys you the polite pool).
+It is optional for OpenAlex, and raises the daily budget from $0.10 to $1.00.
 
 See full reference: `uv run mcp_server.py --help`.
 
@@ -292,8 +321,13 @@ curl -i http://localhost:8011/sse    # sse
 
 ## Troubleshooting
 
-- **`403` from OpenAlex** — missing or invalid API key. Anonymous requests are
-  aggressively rate-limited; always pass a key.
+- **"Insufficient budget … Resets at midnight UTC"** — the daily spend is
+  spent. Set `OPENALEX_API_KEY` to raise it from $0.10 to $1.00, or wait for the
+  reset. The free tools (`lookup_by_doi`, `resolve_entity`) keep working.
+- **`429` from OpenAlex** — too many requests in too short a window, or an
+  exhausted budget surfacing as a rate limit. The server already retries twice
+  with backoff; space out bulk work, and prefer `group_by` over walking pages.
+- **`403` from OpenAlex** — invalid API key.
 - **Empty results** — OpenAlex does not index all publications. Try a broader
   query or verify coverage on [openalex.org](https://openalex.org) directly.
 - **Author/institution not resolved** — automatic resolution does a best-effort
@@ -311,17 +345,44 @@ curl -i http://localhost:8011/sse    # sse
 ## Browser demo / Hugging Face Space
 
 [`demo/`](demo/) holds a **standalone** Gradio app that re-implements **every**
-tool of `mcp_server.py` — `search_works`, `search_semantic`, `lookup_by_doi`,
-`get_citing_works` and `classify_text` — against the same upstream and wraps
-them in a browser UI. Same names, same response shape; only the argument surface
+tool of `mcp_server.py` — the nine listed above — against the same upstream and
+wraps them in a browser UI. Same names, same response shape; only the argument surface
 and the result caps may be narrower, and each narrowing is stated in the tool
 docstring and in [`demo/README.md`](./demo/README.md). Change one, change the
 other.
 
 ---
 
+## Serverless deployment (Modal)
+
+[`modal/`](modal/) holds a **standalone duplicate** of this server, deployed as
+an autoscaling HTTPS endpoint — no container to run, no host to rent. It serves
+the same nine tools under the same names, with the transport built stateless
+because Modal replaces containers between requests.
+
+```bash
+uvx modal serve  mcp/openalex/modal/mcp_server_stateless.py   # ephemeral, reloads on save
+uvx modal deploy mcp/openalex/modal/mcp_server_stateless.py   # persistent
+uvx modal run    mcp/openalex/modal/mcp_server_stateless.py::test_tool   # list served tools
+```
+
+The MCP endpoint is the printed URL with `/mcp/` appended. See
+[`modal/README.md`](./modal/README.md).
+
+---
+
+## Keeping the copies in step
+
+The skill CLI, this server, `modal/` and `demo/` implement the same nine
+capabilities and import nothing from each other. Change one, change all four in
+the same commit; [`PARITY.md`](./PARITY.md) is the checklist, and says what each
+copy is allowed to differ on.
+
+---
+
 ## See also
 
 - Companion skill: [`skills/search-works-openalex`](../../skills/search-works-openalex/SKILL.md)
+- Parity checklist across the four copies: [`PARITY.md`](./PARITY.md)
 - OpenAlex API docs: <https://docs.openalex.org>
 - MCP protocol: <https://modelcontextprotocol.io>
