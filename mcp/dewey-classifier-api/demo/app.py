@@ -280,21 +280,21 @@ def _list() -> tuple[str, dict]:
 
 with gr.Blocks(title="Dewey classifier MCP demo") as demo:
     gr.Markdown(
-        "# Classification Dewey des thèses — démo MCP\n"
+        "# Classification Dewey des thèses\n"
         "Démo autonome du serveur MCP "
         "[`dewey-classifier-api`](https://github.com/smartbiblia-solutions/agentic-stack/tree/main/mcp/dewey-classifier-api) : "
-        "proposer un indice Dewey pour une thèse — son titre, ses mots-clés, son "
-        "résumé — par similarité sémantique. Le vocabulaire est la liste Dewey "
-        "réduite utilisée pour le catalogage des thèses dans le Sudoc (98 classes) : "
-        "un autre type de document reçoit quand même une réponse, mais prise dans "
-        "cette liste-là. Le résultat est un classement à confirmer, pas une cote."
+        "proposer un indice Dewey pour un texte descriptif d'une thèse (titre, mots-clés, résumé, titre+résumé,... "
+        "par similarité sémantique. Le vocabulaire contrôlé est la liste Dewey "
+        "réduite utilisée pour le catalogage des thèses dans le Sudoc (98 classes). "
+        "Utilisable pour d'autres types de document, mais la réponse sera issue de "
+        "cette liste. Le résultat est un indice (classement) à confirmer, et non une cote."
     )
 
-    with gr.Tab("Classer"):
+    with gr.Tab("Classifier"):
         with gr.Row():
             with gr.Column():
                 texts_block = gr.Textbox(
-                    label="Sujets de thèse à classer (un par ligne)",
+                    label="Texte descriptif de thèse(un par ligne)",
                     lines=5,
                     placeholder="Histoire politique de Buenos Aires au XIXe siècle",
                 )
@@ -335,16 +335,14 @@ with gr.Blocks(title="Dewey classifier MCP demo") as demo:
                  "multi-label", 0.0, "albert"],
             ],
             inputs=inputs,
-            label="Un sujet, un lot de trois sujets, une classe unique, un choix "
-                  "restreint à quatre indices, puis le rerank Albert",
+            label="Exemples",
         )
         classify_btn.click(_run, inputs=inputs, outputs=[table_out, raw_out], api_name=False)
 
-    with gr.Tab("Taxonomie"):
+    with gr.Tab("Liste des classes Dewey utilisées"):
         gr.Markdown(
-            "Les classes que ce déploiement peut réellement attribuer : la liste "
-            "Dewey réduite du catalogage des thèses dans le Sudoc, telle que "
-            "l'exploitant la sert — pas la Dewey complète."
+            "Liste des indices Dewey (réduite aux indices pour le catalogage des thèses dans le Sudoc) "
+            "Voir https://theses.fr/schemas/tef/recommandation/oai_sets.html"
         )
         list_btn = gr.Button("Lister les classes", variant="primary")
         classes_out = gr.Markdown()
