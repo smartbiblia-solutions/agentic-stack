@@ -86,6 +86,13 @@ path = "skills/convert-records-unimarc"
 maturity = "experimental"
 tags = ["unimarc", "marc", "conversion", "format"]
 
+[skills.dewey]
+name = "classify-theses-dewey"
+description = "Classification Dewey de thèses françaises (titre, mots-clés, résumé) par similarité sémantique, sur la liste Dewey réduite du catalogage des thèses dans le Sudoc — 98 classes, scores et libellés français"
+path = "skills/classify-theses-dewey"
+maturity = "experimental"
+tags = ["theses", "dewey", "classification", "cataloguing", "sudoc", "abes", "embeddings", "french"]
+
 [skills.dmp]
 name = "write-data-management-plan"
 description = "Rédaction de Plans de Gestion de Données (PGD/DMP) selon les principes FAIR"
@@ -187,3 +194,14 @@ port = 8015
 env = ["IDREF_API_URL", "IDREF_API_KEY"]
 env_required = ["IDREF_API_URL"]
 tags = ["french", "idref", "authority", "alignment", "abes", "qualinka"]
+
+[mcp.dewey-classifier-api]
+name = "dewey-classifier-api"
+description = "Serveur MCP de classification Dewey des thèses : propose les indices les plus proches d'un titre, de mots-clés ou d'un résumé de thèse, par similarité sémantique sur la liste Dewey réduite du catalogage des thèses dans le Sudoc, et liste la taxonomie servie par le déploiement"
+path = "mcp/dewey-classifier-api"
+entrypoint = "mcp_server.py"
+maturity = "experimental"
+port = 8019
+env = ["DEWEY_API_URL", "DEWEY_API_KEY"]
+env_required = []
+tags = ["theses", "dewey", "classification", "cataloguing", "sudoc", "abes", "embeddings", "french"]
