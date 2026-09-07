@@ -1,0 +1,4 @@
+{
+  "defaultProvider": "local-llama",
+  "defaultModel": "Qwen3-VL-8B-Instruct-GGUF"
+}

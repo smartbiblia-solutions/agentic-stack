@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "sudoc-sru": {
+      "url": "https://geraldine-sudoc-sru-mcp.hf.space/gradio_api/mcp/"
+    },
+	"idref-resolver": {
+      "url": "https://geraldine-idref-resolver-mcp.hf.space/gradio_api/mcp/"
+    },
+	"dewey-classifier": {
+      "url": "https://geraldine-dewey-classifier-mcp.hf.space/gradio_api/mcp/"
+    }
+  }
+}
