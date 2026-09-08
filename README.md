@@ -94,14 +94,21 @@ uv run mcp/openalex/mcp_server.py --transport stdio   # run one from a clone
 ```
 
 Each server folder also ships a `demo/`: a **standalone** Gradio app that
-re-implements **every** tool of that server against the same API — same names,
-same response shape, possibly narrower arguments and tighter result caps — wraps
+re-implements **every** tool of that server against the same API, wraps
 them in a browser UI, and deploys as a Hugging Face Space with no extra
 scaffolding:
 
 ```bash
 cd mcp/openalex/demo
 uv run --with 'gradio[mcp]>=6,<7' --with httpx app.py
+```
+
+Each folder also ships a `modal`: a standalone subfolder to deploy the server as a serverless HTTPS endpoint on Modal.
+
+```bash
+cd mcp/openalex/modal
+uvx modal setup
+uvx modal deploy mcp_server_stateless.py
 ```
 
 [`mcp/README.md`](mcp/README.md) has the tool inventory, the Docker recipe and
