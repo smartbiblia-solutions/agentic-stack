@@ -111,9 +111,7 @@ uvx modal setup
 uvx modal deploy mcp_server_stateless.py
 ```
 
-[`mcp/README.md`](mcp/README.md) has the tool inventory, the Docker recipe and
-the MCP conventions; each server's own README has per-client setup and the full
-flag reference.
+>See also this [`Huggingface collection`](https://huggingface.co/collections/Geraldine/academic-mcp-servers) to test each MCP without local installation.
 
 ---
 
