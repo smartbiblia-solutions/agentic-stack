@@ -11,14 +11,20 @@ are not installed there. It serves the same tools, under the same names, with th
 same envelope:
 
 - `search_theses`
+- `resolve_establishment`
 - `get_thesis`
 - `search_persons`
 - `list_facets`
 - `search_by_organisme`
 
-The copy is **hand-kept**, exactly like `../demo/`: change a tool in
-`../mcp_server.py` and change it here in the same commit. Nothing enforces it —
-`test_tool` below is the check.
+The copy is **generated**: change a tool in `../mcp_server.py`, then run
+`python3 mcp/theses-fr/scripts/sync_modal.py` and commit both files together.
+`test_tool` below checks the deployed result.
+
+Nothing is mounted into the image, so the establishment referential
+(`../etablissements.json`) is fetched from this repository's `main` branch on
+first use. Set `THESES_FR_ETABLISSEMENTS` (a URL or a path) through a
+`modal.Secret` to point it elsewhere.
 
 ## Deploy
 

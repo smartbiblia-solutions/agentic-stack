@@ -11,42 +11,55 @@ facet values a query accepts.
 
 | Tool | Purpose |
 |---|---|
-| `search_theses` | Search theses by establishment code, discipline, thematic domain, author or supervisor name, language, online availability, date range and status — with sorting, pagination and optional résumé hydration. |
-| `get_thesis` | Fetch one record with its bilingual résumés, by NNT or by subject number. |
+| `search_theses` | Search theses by subject (`topic`: stemmed, over titles, résumés and keywords), establishment (name, code or PPN), status, defense dates, discipline, author, supervisor, online availability, language, thematic domain, or any organisation's PPN and role — with sorting, pagination and optional truncated résumés. |
+| `resolve_establishment` | Turn a name, acronym or code into the establishment's `codeEtab`, PPN and lineage (former and later codes), with a live thesis count. |
+| `get_thesis` | Fetch one record by NNT or subject number: full metadata, jury, both résumés, and the checked full-text links when the thesis is online. |
 | `search_persons` | Search the person index — authors, supervisors, rapporteurs, jury members — with their roles and thesis identifiers. |
-| `list_facets` | List the facet values a query accepts (establishments, doctoral schools, thematic domains, disciplines, languages…), with counts. |
-| `search_by_organisme` | List an organisation's theses grouped by the role it played — awarding establishment, cotutelle, research partner, doctoral school. |
+| `list_facets` | Count theses per facet value (establishments, doctoral schools, thematic domains, disciplines, languages, status) for a query, one facet at a time, filterable by text. |
+| `search_by_organisme` | Profile an organisation: how many theses it took part in per role — awarding establishment, cotutelle, research partner, doctoral school — split by status, plus a few samples. |
 
 **No API key is required** — the service is public and anonymous.
 
-The server is a single self-contained file, `mcp_server.py`, with inline
+The server is one Python file, `mcp_server.py`, with inline
 [PEP 723](https://peps.python.org/pep-0723/) dependencies (`fastmcp`, `httpx`)
-that [`uv`](https://docs.astral.sh/uv/) installs automatically on first run.
+that [`uv`](https://docs.astral.sh/uv/) installs automatically on first run,
+plus the establishment referential `etablissements.json` next to it (fetched
+from this repository when the file is absent, e.g. with `uv run <url>`).
 
 ---
 
-## Three API facts that shape every call
+## API facts that shape every call
 
-All verified against the live service, and all worth knowing before writing a
-query:
+All verified against the live service:
 
-1. **`filtres` does not filter.** The documented `filtres` parameter leaves the
-   hit count untouched, whatever syntax it is given. Every constraint the tools
-   accept is therefore compiled into one Lucene `q` and ANDed together.
-2. **Search hits carry no résumé.** `/recherche/` returns a lightweight
-   projection; the abstract lives on the record endpoint only. Hence
-   `search_theses(hydrate=True)` — one extra request per hit, capped at 50 —
-   and `get_thesis`. Everything else the record adds beyond the résumés
-   (keywords, jury, doctoral schools, partners) already rides along on the hit.
-3. **`codeEtab` is the establishment filter, not `nnt`.** `establishment="COAZ"`
-   compiles to `codeEtab:(COAZ)` — 2 706 theses. The older `nnt:*COAZ*` idiom
-   returns 1 568: exactly the defended subset, because a thesis in preparation
-   has no NNT.
+1. **A bare query is stemmed; a field query is not.** `q=éolien` and
+   `q=éoliens` both return ~1 360 records, over titles, résumés and keywords;
+   `titrePrincipal:(éolien)` returns 62 and `titrePrincipal:(eolien)` 6. Hence
+   `topic`, compiled as a bare query. Words are ANDed by default.
+2. **`filtres` does not filter.** Every constraint is compiled into one Lucene
+   `q` and ANDed.
+3. **Search hits carry no résumé and no `accessible` flag.** Both live on the
+   record endpoint only — hence `get_thesis` and `with_abstracts`.
+4. **Nothing maps an establishment name to its code.** `codeEtab:(UCA)` simply
+   returns 0. `etablissements.json` (231 ABES codes, PPNs, aliases,
+   predecessor/successor codes; built by `scripts/build_etablissements.py`
+   from the IdRef/ABES alignment of
+   [humatheque-idref-qualinka-api](https://github.com/gegedenice/humatheque-idref-qualinka-api))
+   resolves names, and flags ambiguous ones: "UCA" is both Université Côte
+   d'Azur and Université Clermont Auvergne.
+5. **An unknown identifier answers HTTP 400** on `/theses/these/{id}`.
+6. **Full text:** `/api/v1/document/{nnt}` redirects to where the text lives
+   (HAL, an institutional repository), `/api/v1/abes/{nnt}` serves the PDF
+   ABES holds; both answer 403 for a thesis that is not online.
 
-Two further traps the tools work around: an unknown identifier answers HTTP 200
-with an **empty body** rather than 404 (surfaced as `error: "No record found…"`),
-and `titreEN` is not reliably an English title, so it is returned as `title_en`
-and never promoted to `title`.
+Responses are deliberately small — no upstream `raw` record, no empty field,
+eight keywords per hit, résumés truncated to 600 characters on search. A ten-hit
+search is ~7 kB instead of ~37 kB, a record ~6 kB instead of ~15 kB, and an
+organisation profile ~4 kB instead of ~1 MB.
+
+Note for maintainers: FastMCP drops every docstring section that opens with a
+`Header:` line from the tool description an agent sees (only `Args:` survives,
+as parameter descriptions). Write guidance as plain paragraphs.
 
 ---
 
@@ -54,13 +67,14 @@ and never promoted to `title`.
 
 Once the server is connected, these are the kinds of request it answers:
 
-- *"Find theses on énergies marines renouvelables defended at Université Côte d'Azur since 2020."* → `search_theses`
+- *"Find theses on énergies marines renouvelables defended at Université Côte d'Azur since 2020."* → `search_theses(topic=…, establishment="Université Côte d'Azur", status="soutenue", date_from="2020")`
 - *"Which theses on that subject are currently in preparation?"* → `search_theses` with `status="enCours"`
 - *"Give me the full record and both résumés for NNT 2021COAZ4028."* → `get_thesis`
-- *"Find the last ten defended theses with their full text online, and include the abstracts."* → `search_theses` with `accessible="oui"` and `hydrate=True`
-- *"Which theses did Frédéric Precioso supervise, and who sat on their juries?"* → `search_persons`
-- *"What doctoral schools and disciplines appear for this query, with counts?"* → `list_facets`
-- *"List everything Université de Lille was involved in, split by the role it played — awarding institution, cotutelle, doctoral school."* → `search_by_organisme`
+- *"Which code did Université de Nice use, and what came after it?"* → `resolve_establishment`
+- *"Find the last ten defended theses with their full text online, and include the abstracts."* → `search_theses(online=True, sort="dateDesc", with_abstracts=True)`
+- *"Which theses did Thierry Turletti supervise?"* → `search_theses(director=…)`, or `search_persons` for every role
+- *"Which establishments host theses on biofouling?"* → `list_facets(topic="biofouling", facet="Établissements")`
+- *"How many theses was Université Côte d'Azur involved in, and as what?"* → `search_by_organisme`
 
 ---
 
@@ -275,9 +289,10 @@ Restart Claude Desktop after saving; tools appear under the plug icon.
 | `--backoff-base` | `1.0` | Exponential backoff base in seconds. |
 | `--backoff-factor` | `2.0` | Backoff multiplier. |
 | `--jitter-max` | `0.25` | Max random jitter per retry in seconds. |
+| `--etablissements` | — | Path or URL of the establishment referential. Default: `etablissements.json` next to the script, else the copy on this repository's `main` branch. Also reads `THESES_FR_ETABLISSEMENTS`. |
 | `--trace` | off | Include an HTTP trace log in every tool response. |
 
-There is no endpoint or credential variable: theses.fr is a single public host.
+There is no credential: theses.fr is a single public host.
 
 See full reference: `uv run mcp_server.py --help`.
 
@@ -285,37 +300,34 @@ See full reference: `uv run mcp_server.py --help`.
 
 ## Query syntax
 
-`q` is Lucene over an Elasticsearch index. Most constraints have a dedicated
-`search_theses` argument; the raw `query` covers the rest. Fields verified to
-work:
+`q` is Lucene over an Elasticsearch index. `topic` and the dedicated
+`search_theses` arguments cover most needs; the raw `query` argument (ANDed with
+the rest) covers the others. Fields verified to work:
 
 | Field | Example | Argument |
 |---|---|---|
-| `titrePrincipal` | `titrePrincipal:(informatique)` | — (`titreEN` is returned but not searchable) |
-| `resumes.fr` / `resumes.en` | `resumes.fr:(microbiote)` | — (bare `resumes.*` is a **400**) |
-| `codeEtab` | `codeEtab:(COAZ)` — case-sensitive | `establishment` |
-| `discipline` | `discipline:(informatique)` — free text, ~4000 values | `discipline` |
-| `oaiSetNames` | `oaiSetNames:("Informatique")` — the 98 controlled *Domaines thématiques* labels, **quoted** | `domain` |
-| `auteursNP` / `directeursNP` | `directeursNP:(Frédéric Precioso)` — name tokens, **never quoted** | `author` / `director` |
-| `rapporteursNP`, `membresJuryNP`, `presidentJuryNP` | `membresJuryNP:(Bouveyron)` | — |
-| `auteursPpn`, `directeursPpn`, `ecolesDoctoralesPpn`, `partenairesRecherchePpn` | `directeursPpn:(060582952)` — exact, no homonyms | — |
+| *(bare words)* | `énergies marines renouvelables` — stemmed, accent-folded, all descriptive fields, ANDed | `topic` |
+| `titrePrincipal` | `titrePrincipal:(informatique)` — **not** stemmed | — |
+| `resumes.fr` / `resumes.en` | `resumes.fr:(microbiote)` | — |
 | `sujetsLibelle` / `sujetsRameauLibelle` | `sujetsRameauLibelle:("Apprentissage automatique")` | — |
+| `codeEtab` | `codeEtab:(COAZ)` — case-sensitive | `establishment` |
+| `etabSoutenancePpn` / `etabSoutenanceN` | `etabSoutenancePpn:(241035694)` | `establishment` (PPN, or a name the referential lacks) |
+| `etabsCotutellePpn`, `partenairesRecherchePpn`, `ecolesDoctoralesPpn` | `partenairesRecherchePpn:(241035694)` | `organisation_ppn` + `organisation_role` |
+| `discipline` | `discipline:(informatique)` | `discipline` |
+| `oaiSetNames` | `oaiSetNames:("Informatique")` — controlled label, **quoted** | `domain` |
+| `auteursNP` / `directeursNP` | `directeursNP:(Thierry Turletti)` — name tokens, **never quoted** | `author` / `director` |
+| `rapporteursNP`, `membresJuryNP`, `presidentJuryNP` and their `*Ppn` | `membresJuryNP:(Bouveyron)` | — |
 | `langues` | `langues:(en)` | `language` |
-| `accessible` | `accessible:(oui)` — online full text; defended theses only | `accessible` |
-| `status` | `status:(soutenue)` (or `enCours`) | `status` |
-| `dateSoutenance` | `dateSoutenance:([2024-01-01 TO 2025-12-31])` — ISO bounds, though results render `DD/MM/YYYY` | `date_from` / `date_to` |
-| `datePremiereInscriptionDoctorat` | `datePremiereInscriptionDoctorat:([2023-01-01 TO *])` | — |
-| `dateInsertionDansES` | `dateInsertionDansES:([2026-08-01 TO *])` — index date, for incremental sync | — |
-| `numSujet` | `numSujet:(s68236)` | — |
+| `accessible` | `accessible:(oui)` — online full text; defended theses only | `online` |
+| `status` | `status:(soutenue)` or `status:(enCours)` | `status` |
+| `dateSoutenance` | `dateSoutenance:([2020-01-01 TO *])` — ISO bounds | `date_from` / `date_to` (`YYYY` accepted) |
+| `datePremiereInscriptionDoctorat`, `dateInsertionDansES` | `dateInsertionDansES:([2026-08-01 TO *])` — index date, for incremental sync | — |
+| `nnt`, `numSujet` | `numSujet:(s312947)` | — |
 
-Quoting cuts both ways. A controlled label must be quoted — unquoted
-`Aix-Marseille` or an unquoted `oaiSetNames` value is tokenized and matches far
-more, or nothing at all. A person name must **not** be:
-`directeursNP:("Frédéric Precioso")` returns 0, the unquoted form returns 14.
-Nested paths do not work (`auteurs.nom:Dupont` returns zero) — the flat `*NP`
-and `*Ppn` fields are how a person is queried here. Use `search_persons` to turn
-a name into a PPN, and `list_facets` to learn the exact label a field query
-needs.
+`(field1 OR field2):(x)` is not valid — upstream answers 400; write
+`field1:(x) OR field2:(x)`. Lucene specials (`+ - ! { } [ ] ^ ~ ? : \ /`) are
+escaped in `topic`; quotes (phrase), parentheses (grouping) and `*`
+(truncation) are kept.
 
 ---
 
@@ -341,32 +353,26 @@ curl -sD- -o /dev/null -X POST http://localhost:8017/mcp \
 
 ## Troubleshooting
 
-- **`abstract` is null on every hit** — expected: search hits carry no résumé.
-  Pass `hydrate=True`, or call `get_thesis`. Many records have no résumé at all,
-  and stay null after hydration.
-- **`hydrate_error` on one record** — that single detail fetch failed; the other
-  hits are unaffected.
-- **Zero results from a query you believe correct** — malformed Lucene comes back
-  as 200 with zero hits rather than 400. Re-check quoting and accents before
-  concluding the corpus is empty, and use `list_facets` for exact labels.
-- **`get_thesis` says "No record found (empty response)"** — theses.fr answers
-  200 with an empty body for an unknown identifier. Check the NNT, or use the
-  subject number (`s68236`) for a thesis still in preparation.
+- **Zero results** — `hint` says why: an establishment filter that matches
+  nothing at all (wrong code or name — call `resolve_establishment`), field
+  queries that are not stemmed (move the words to `topic`), or simply no match,
+  which is a valid answer.
+- **`error: "… is ambiguous"`** — the establishment name or acronym names
+  several establishments; pass one of the codes listed.
+- **Theses of a merged university are missing** — the code changed. Set
+  `include_predecessors=True`, or see the lineage with `resolve_establishment`.
+- **`abstract_fr` / `abstract_en` absent** — the record has none; `missing`
+  says so. On search hits they only appear with `with_abstracts=True`.
+- **`get_thesis` says "No thesis with identifier …"** — theses.fr answers 400
+  for an unknown identifier. A thesis in preparation is usually reached by its
+  subject number (`s312947`).
+- **HTTP 400 on a search** — malformed Lucene in `query`; the error message
+  says what to check.
 - **A filter seems ignored** — `filtres` is inert upstream; only `q` filters.
-- **An establishment returns only defended theses** — the query is using
-  `nnt:*CODE*`. Use `establishment=` (i.e. `codeEtab`), which also finds theses
-  in preparation. `codeEtab` is case-sensitive; the tool upper-cases for you.
-- **A person-name query returns zero** — it is quoted. `directeursNP` holds name
-  tokens in no fixed order, so the phrase never matches; drop the quotes, or use
-  `author=` / `director=`.
-- **`accessible="oui"` with `status="enCours"` returns zero** — always, by
-  construction: only a defended thesis has an online full text.
-- **`search_by_organisme` returns far fewer records than `total_found`** —
-  upstream caps each role bucket at 100. `totals` still reports the true counts;
-  use `search_theses(establishment=…)` with paging for an exhaustive listing.
-- **`search_by_organisme` says the PPN is probably a person** — it is an IdRef
-  PPN, but of a person, not an organisation. Take an organisation PPN from a
-  record's `institution_ppn`.
+- **`resolve_establishment` says the referential is unavailable** — the
+  server found no `etablissements.json` and could not fetch the remote copy;
+  pass `--etablissements`. Name filters still work, more loosely, through
+  `etabSoutenanceN`.
 - **First run is slow** — `uv` is resolving and caching dependencies; subsequent
   runs start in under a second. Set `UV_CACHE_DIR` to a writable directory if
   needed.
@@ -378,13 +384,12 @@ curl -sD- -o /dev/null -X POST http://localhost:8017/mcp \
 
 ## Browser demo / Hugging Face Space
 
-[`demo/`](demo/) holds a **standalone** Gradio app that re-implements **every**
-tool of `mcp_server.py` — `search_theses`, `get_thesis`, `search_persons`,
-`list_facets` and `search_by_organisme` — against the same upstream and wraps
-them in a browser UI. Same names, same response shape; only the argument surface
-and the result caps may be narrower, and each narrowing is stated in the tool
-docstring and in [`demo/README.md`](./demo/README.md). Change one, change the
-other.
+[`demo/`](demo/) holds a **standalone** Gradio app that re-implements the tools
+against the same upstream and wraps them in a browser UI. It still exposes the
+previous tool surface (`hydrate`, `raw`, no `topic` nor
+`resolve_establishment`) and has to be brought in line with `mcp_server.py`.
+The Modal copy, [`modal/`](modal/), is generated from `mcp_server.py` by
+`scripts/sync_modal.py`.
 
 ---
 
@@ -393,6 +398,6 @@ other.
 - Server index: [`mcp/README.md`](../README.md)
 - Companion skill: [`skills/search-theses-fr`](../../skills/search-theses-fr) — the same source as a CLI skill
 - theses.fr: <https://theses.fr>
-- API documentation: <https://documentation.abes.fr/aidethesespro/index.html#PrincipeAPI>
+- API documentation: <https://documentation.abes.fr/aidethesesfr/index.html#PrincipeAPI>
 - OpenAPI: <https://theses.fr/api/v1/recherche/openapi.yaml>
 - MCP protocol: <https://modelcontextprotocol.io>
