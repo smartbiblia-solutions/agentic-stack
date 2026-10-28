@@ -315,7 +315,8 @@ the rest) covers the others. Fields verified to work:
 | `etabsCotutellePpn`, `partenairesRecherchePpn`, `ecolesDoctoralesPpn` | `partenairesRecherchePpn:(241035694)` | `organisation_ppn` + `organisation_role` |
 | `discipline` | `discipline:(informatique)` | `discipline` |
 | `oaiSetNames` | `oaiSetNames:("Informatique")` — controlled label, **quoted** | `domain` |
-| `auteursNP` / `directeursNP` | `directeursNP:(Thierry Turletti)` — name tokens, **never quoted** | `author` / `director` |
+| `auteursNP` / `directeursNP` | `directeursNP:(Thierry Turletti)` — name tokens, **never quoted**; accents not folded for names stored decomposed (see below) | `author` / `director` |
+| `auteursPpn` / `directeursPpn` | `directeursPpn:(087273934)` — exact, no homonyms | `author` / `director` given a PPN |
 | `rapporteursNP`, `membresJuryNP`, `presidentJuryNP` and their `*Ppn` | `membresJuryNP:(Bouveyron)` | — |
 | `langues` | `langues:(en)` | `language` |
 | `accessible` | `accessible:(oui)` — online full text; defended theses only | `online` |
@@ -368,6 +369,13 @@ curl -sD- -o /dev/null -X POST http://localhost:8017/mcp \
   subject number (`s312947`).
 - **HTTP 400 on a search** — malformed Lucene in `query`; the error message
   says what to check.
+- **A person filter misses some of their theses** — some records store names
+  with decomposed accents (Unicode NFD), which the index does not fold:
+  `directeursNP:(Frédéric Precioso)` typed normally finds 14 of his 23 theses.
+  `author=` / `director=` search every accented word in both forms, and accept
+  an IdRef PPN (`director="087273934"`), the exact way to query a person. An
+  unaccented spelling ("Frederic") cannot reach those records: write the
+  accents, or use the PPN.
 - **A filter seems ignored** — `filtres` is inert upstream; only `q` filters.
 - **`resolve_establishment` says the referential is unavailable** — the
   server found no `etablissements.json` and could not fetch the remote copy;
