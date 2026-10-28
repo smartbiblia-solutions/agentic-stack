@@ -415,12 +415,16 @@ def make_mcp_server():
         except ValueError:
             return None
 
+    def _full_name(p: dict[str, Any]) -> str:
+        """"Prénom Nom", in NFC: some records store names with decomposed accents."""
+        full = f"{(p.get('prenom') or '').strip()} {(p.get('nom') or '').strip()}".strip()
+        return unicodedata.normalize("NFC", full)
+
     def _person_names(people: Any) -> list[str]:
         out: list[str] = []
         for p in people or []:
             if isinstance(p, dict):
-                full = f"{(p.get('prenom') or '').strip()} {(p.get('nom') or '').strip()}".strip()
-                if full:
+                if full := _full_name(p):
                     out.append(full)
             elif p:
                 out.append(str(p))
@@ -549,7 +553,7 @@ def make_mcp_server():
         theses = p.get("theses") or []
         return _compact({
             "id": p.get("id"),
-            "name": f"{(p.get('prenom') or '').strip()} {(p.get('nom') or '').strip()}".strip(),
+            "name": _full_name(p),
             "idref_ppn": p.get("id") if p.get("has_idref") else None,
             "roles": p.get("roles") or {},
             "theses_count": len(theses),
@@ -569,6 +573,30 @@ def make_mcp_server():
         if text.count("(") != text.count(")"):
             text = text.replace("(", " ").replace(")", " ")
         return " ".join(text.split())
+
+    def _person_clause(field: str, value: str) -> str:
+        """Compile a person filter on `<field>NP`, or on `<field>Ppn` for a PPN.
+
+        The NP fields hold name tokens in no fixed order, so the phrase never
+        matches: the words are ANDed, unquoted. And some records store names with
+        decomposed accents (NFD: "e" + U+0301), which the index does not fold —
+        "Frédéric" typed normally misses them; for Frédéric Precioso, 9 of his 23
+        theses. Every accented word is therefore sought in both forms. An
+        unaccented spelling cannot reach those records ("Frederic" finds 14); a
+        fuzzy match would, but it also turns "Jean Martin" from 455 hits into 627,
+        so the tool asks for accents or a PPN instead.
+        """
+        raw = value.strip()
+        if PPN_RE.match(raw):
+            return f"{field}Ppn:({raw})"
+        terms = []
+        for word in _clean_topic(raw).replace('"', "").replace("(", " ").replace(")", " ").split():
+            if word in ("AND", "OR", "NOT"):
+                continue
+            nfc = unicodedata.normalize("NFC", word)
+            nfd = unicodedata.normalize("NFD", word)
+            terms.append(f"({nfc} OR {nfd})" if nfc != nfd else word)
+        return f"{field}NP:({' AND '.join(terms)})"
 
     def _iso_bound(value: str | None, upper: bool) -> str | None:
         """Accept YYYY as well as YYYY-MM-DD; a year spans the whole year."""
@@ -627,6 +655,11 @@ def make_mcp_server():
         houlomotrice OR éolien en mer"); quote a phrase; `énerg*` truncates. Do not
         write field prefixes in `topic`.
 
+        `author` and `director` take a name with its accents ("Frédéric
+        Precioso", not "Frederic": some records store names in a form only the
+        accented spelling reaches) or, exactly and without homonyms, an IdRef PPN
+        ("087273934", from search_persons).
+
         `establishment` takes a name ("Université Côte d'Azur", "UCA", "Sorbonne
         Université"), a 4-character code ("COAZ") or a PPN; the establishment it
         resolved to is echoed in `establishment_resolved`. Establishments merge
@@ -652,8 +685,8 @@ def make_mcp_server():
             date_from: Defense date lower bound, "YYYY" or "YYYY-MM-DD".
             date_to: Defense date upper bound, "YYYY" or "YYYY-MM-DD".
             discipline: Discipline words, e.g. "informatique".
-            author: Author name, e.g. "Giuseppe Di Lena" (word order free).
-            director: Supervisor name, e.g. "Thierry Turletti".
+            author: Author name, e.g. "Giuseppe Di Lena" (word order free), or IdRef PPN.
+            director: Supervisor name, e.g. "Frédéric Precioso", or IdRef PPN, e.g. "087273934" (exact, no homonyms).
             online: True for theses whose full text is online (defended only).
             language: ISO 639-1 writing language, e.g. "en".
             domain: A "Domaines thématiques" label from list_facets, e.g. "Informatique".
@@ -689,12 +722,10 @@ def make_mcp_server():
             clauses.append(f"dateSoutenance:([{lo or '*'} TO {hi or '*'}])")
         if discipline:
             clauses.append(f"discipline:({_clean_topic(discipline)})")
-        # Person-name fields hold tokens in no fixed order: quoted, the phrase
-        # never matches ("Frédéric Precioso" → 0, unquoted → 14).
         if author:
-            clauses.append(f"auteursNP:({_clean_topic(author).replace(chr(34), '')})")
+            clauses.append(_person_clause("auteurs", author))
         if director:
-            clauses.append(f"directeursNP:({_clean_topic(director).replace(chr(34), '')})")
+            clauses.append(_person_clause("directeurs", director))
         if online is not None:
             clauses.append(f"accessible:({'oui' if online else 'non'})")
         if language:
