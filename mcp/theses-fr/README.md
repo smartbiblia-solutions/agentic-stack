@@ -392,12 +392,16 @@ curl -sD- -o /dev/null -X POST http://localhost:8017/mcp \
 
 ## Browser demo / Hugging Face Space
 
-[`demo/`](demo/) holds a **standalone** Gradio app that re-implements the tools
-against the same upstream and wraps them in a browser UI. It still exposes the
-previous tool surface (`hydrate`, `raw`, no `topic` nor
-`resolve_establishment`) and has to be brought in line with `mcp_server.py`.
-The Modal copy, [`modal/`](modal/), is generated from `mcp_server.py` by
-`scripts/sync_modal.py`.
+[`demo/`](demo/) holds a Gradio app, deployable as a Hugging Face Space, that
+serves the same six tools over MCP (`/gradio_api/mcp/`) and wraps them in a
+browser UI. The Space is pushed from `demo/` alone, so the app cannot import
+`mcp_server.py`: it imports `demo/theses_core.py`, **generated** from it. The
+Modal copy, [`modal/`](modal/), is generated the same way. After any change to
+`mcp_server.py`:
+
+```bash
+python3 mcp/theses-fr/scripts/sync_copies.py   # rewrites modal/ and demo/theses_core.py
+```
 
 ---
 

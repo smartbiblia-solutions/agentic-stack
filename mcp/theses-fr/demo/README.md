@@ -12,49 +12,53 @@ short_description: Search French doctoral theses through the theses-fr API.
 
 # theses.fr MCP demo
 
-A standalone Gradio demo of the
+A Gradio demo of the
 [`theses-fr`](https://github.com/smartbiblia-solutions/agentic-stack/tree/main/mcp/theses-fr)
-MCP server: search the French national register of doctoral theses (ABES), fetch
-one thesis with its bilingual résumés, find a supervisor, enumerate the facet
-labels, or read an institution's whole doctoral footprint.
+MCP server: search the French national register of doctoral theses (ABES) by
+subject, establishment, person or organisation, resolve an establishment's code
+and lineage, fetch one thesis with both résumés and its full-text link, find a
+supervisor, count theses per facet, or profile an organisation.
 
-The **canonical MCP endpoint is `mcp_server.py`** one folder up, with a date
-range on `search_theses`, an `--trace` mode and no tightened result limit. This
-app exposes the same five tools at `/gradio_api/mcp/`; that endpoint is
-demo-grade and secondary. Set `GRADIO_MCP_SERVER=false` wherever the real server
-is reachable, so clients cannot bind to the wrong one.
+The tools **are** the canonical server's: `theses_core.py` is generated from
+`../mcp_server.py` by `../scripts/sync_copies.py` (this folder is pushed to the
+Space alone, so the app cannot import the server) and `app.py` only adds the
+Gradio layer. The canonical MCP endpoint remains `mcp_server.py`; the demo's
+endpoint at `/gradio_api/mcp/` is demo-grade. Set `GRADIO_MCP_SERVER=false`
+wherever the real server is reachable, so clients cannot bind to the wrong one.
 
 | Tool | What it does |
 |---|---|
-| `search_theses` | Lucene search, with the filters compiled into `q` |
-| `get_thesis` | One record by NNT or subject number, with its résumés |
+| `search_theses` | Subject (`topic`, stemmed over titles, résumés, keywords), establishment by name/code/PPN, status, dates, people by accented name or PPN, organisation role… |
+| `resolve_establishment` | Name, acronym or code → `codeEtab`, PPN, predecessors and successors, live thesis count |
+| `get_thesis` | One record by NNT or subject number: jury, both résumés, checked full-text links |
 | `search_persons` | Name → people, their roles and their theses |
-| `list_facets` | The exact facet labels a query accepts, with counts |
-| `search_by_organisme` | An organisation's theses, grouped by its role |
+| `list_facets` | Thesis counts per facet value for a subject, one facet at a time, filterable |
+| `search_by_organisme` | An organisation's thesis counts per role, with a few samples |
 
 ## Deliberate narrowings
 
-Deliberate narrowings, documented in the tool docstrings: `max_results` is
-clamped to 10 instead of 200, and `search_by_organisme`'s `role` is a plain `str`
-validated in the function rather than a `Literal`, because Gradio builds the MCP
-schema from the annotations and a bad value should come back in `error` rather
-than as a transport failure.
+- `max_results` is capped at 10 — the tool descriptions say so.
+- Enumerated arguments (`status`, `sort`, `organisation_role`, `facet`, `role`)
+  are plain `str` validated in `app.py` rather than `Literal`: Gradio builds the
+  MCP schema from the annotations, and a bad value should come back in `error`
+  rather than as a transport failure.
+- Gradio's MCP endpoint has no server-level `instructions`; the workflow hints
+  of the canonical server live in each tool description instead.
 
-## Three API facts the demo inherits
+## Change it
 
-- theses.fr's `filtres` parameter is inert, so every constraint is compiled into
-  one Lucene `q`.
-- Search hits carry **no résumé** — it lives on the record endpoint only. Hence
-  the `hydrate` argument, one extra request per hit, and the `get_thesis` tab.
-- The establishment filter is `codeEtab:(COAZ)`, upper-cased because the field is
-  case-sensitive. The older `nnt:*COAZ*` idiom only matches defended theses (1 568
-  against 2 706 for Université Côte d'Azur), since a thesis in preparation has no
-  NNT yet.
+Tool behaviour belongs to `../mcp_server.py`. Change it there, then:
 
-Quoting is per-field and the demo compiles it for you: `oaiSetNames` (the
-« Domaine thématique » box) must be quoted, `auteursNP` / `directeursNP` must
-not. `accessible` describes the online full text and only ever matches defended
-theses — combined with `enCours` it returns nothing.
+```bash
+python3 mcp/theses-fr/scripts/sync_copies.py   # rewrites demo/theses_core.py and modal/
+```
+
+Never edit `theses_core.py` by hand. `app.py` holds only the wrappers, the
+Markdown renderers and the UI.
+
+The establishment referential (`../etablissements.json`) is not in this folder:
+the core fetches it from the repository's `main` branch on first use. Set
+`THESES_FR_ETABLISSEMENTS` to a path or URL to point it elsewhere.
 
 ## Run it
 
@@ -75,7 +79,7 @@ theses.fr is public and anonymous — no credential.
 
 | Variable | Effect |
 |---|---|
-| `THESES_FR_API_URL` | API base URL (default `https://theses.fr/api/v1`) |
+| `THESES_FR_ETABLISSEMENTS` | Path or URL of the establishment referential (default: the repository copy on `main`) |
 | `GRADIO_SERVER_NAME` / `GRADIO_SERVER_PORT` | Bind address and port (default `0.0.0.0:7860`) |
 | `GRADIO_MCP_SERVER` | `false` disables the demo MCP endpoint (default `true`) |
 

@@ -1,0 +1,1019 @@
+"""theses.fr core for the Gradio demo — GENERATED, do not edit.
+
+Generated from ../mcp_server.py by ../scripts/sync_copies.py: the canonical
+server's helpers and tool functions, without FastMCP. The Hugging Face Space is
+pushed from demo/ alone, so app.py cannot import the server itself.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import pathlib
+import random
+import re
+import time
+import unicodedata
+import urllib.parse
+from typing import Any, Literal
+
+import httpx
+
+
+API_URL = "https://theses.fr/api/v1"
+BASE_URL = f"{API_URL}/theses"
+PERSONS_URL = f"{API_URL}/personnes"
+USER_AGENT = "smartbiblia-theses-fr-mcp/0.3"
+RETRIED_STATUS = {429, 500, 502, 503, 504}
+
+MAX_ROWS = 50
+MAX_ABSTRACT_HITS = 10
+SEARCH_ABSTRACT_CHARS = 600
+MAX_KEYWORDS = 8
+MAX_PERSON_THESES = 20
+
+# Next to the script in a checkout or a Docker image; fetched from the repo when
+# the script runs from a URL (`uv run https://…`) or on Modal, where it is alone.
+ETAB_LOCAL = pathlib.Path(__file__).resolve().parent / "etablissements.json"
+ETAB_REMOTE = ("https://raw.githubusercontent.com/smartbiblia-solutions/agentic-stack/"
+               "main/mcp/theses-fr/etablissements.json")
+
+# /theses/organisme/{ppn} answers one list per role the organisation plays, each
+# doubled into a defended and an in-preparation bucket, and each capped upstream
+# at 100 records. Keys are the response's own, minus the "EnCours" suffix.
+ORGANISME_ROLES = ("etabSoutenance", "etabCotutelle",
+                   "partenaireRecherche", "ecoleDoctorale")
+# The searchable PPN field behind each role, so a role is a filter too.
+ROLE_FIELDS = {
+    "etabSoutenance": "etabSoutenancePpn",
+    "etabCotutelle": "etabsCotutellePpn",
+    "partenaireRecherche": "partenairesRecherchePpn",
+    "ecoleDoctorale": "ecolesDoctoralesPpn",
+}
+
+NNT_RE = re.compile(r"^\d{4}[A-Z0-9]{8}$")
+SUJET_RE = re.compile(r"^s\d+$")
+PPN_RE = re.compile(r"^\d{8}[\dX]$")
+CODE_RE = re.compile(r"^[A-Za-z0-9]{4}$")
+# Lucene specials a free-text topic must not leak. `"` (phrase) and `*`
+# (truncation) are kept on purpose; parentheses are kept for OR groups.
+LUCENE_ESCAPE_RE = re.compile(r'([+\-!{}\[\]^~?:\\/]|&&|\|\|)')
+
+
+HTTP_TIMEOUT = 20.0
+MAX_RETRIES = 3
+BACKOFF_BASE = 1.0
+BACKOFF_FACTOR = 2.0
+JITTER_MAX = 0.25
+TRACE = False
+# The --etablissements flag of the canonical server, as an environment variable.
+ETAB_SOURCE = os.environ.get("THESES_FR_ETABLISSEMENTS")
+
+# One pooled client for the process. Opening an AsyncClient per call would
+# rebuild the connection pool — and replay the TLS handshake — every time.
+HTTP = httpx.AsyncClient(
+    timeout=HTTP_TIMEOUT,
+    follow_redirects=True,
+    headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+)
+
+
+# ── HTTP ──────────────────────────────────────────────────────────────────────
+
+def _backoff_sleep_seconds(attempt: int) -> float:
+    base = BACKOFF_BASE * (BACKOFF_FACTOR ** attempt)
+    return base + (random.uniform(0.0, JITTER_MAX) if JITTER_MAX > 0 else 0.0)
+
+
+async def _http_get(
+    url: str,
+    params: list[tuple[str, str]] | None = None,
+    *,
+    events: list[dict[str, Any]],
+    as_text: bool = False,
+) -> tuple[Any, str | None, int | None]:
+    """GET with bounded retries. Returns (payload, error, status_code).
+
+    Never raises: an upstream failure is a successful tool call carrying
+    `error`, so a client reads the failure instead of a protocol exception.
+    """
+    for attempt in range(1, MAX_RETRIES + 1):
+        t0 = time.perf_counter()
+        try:
+            if TRACE:
+                events.append({"event": "http_request", "url": url,
+                               "params": params or [], "attempt": attempt})
+            resp = await HTTP.get(url, params=params)
+            if TRACE:
+                events.append({"event": "http_response", "status_code": resp.status_code,
+                               "attempt": attempt,
+                               "elapsed_ms": int((time.perf_counter() - t0) * 1000)})
+
+            if resp.status_code in RETRIED_STATUS and attempt < MAX_RETRIES:
+                await asyncio.sleep(_backoff_sleep_seconds(attempt))
+                continue
+            if resp.status_code >= 400:
+                return None, f"HTTP {resp.status_code}", resp.status_code
+            if not resp.content.strip():
+                return None, "empty response", resp.status_code
+            if as_text:
+                return resp.text, None, resp.status_code
+            try:
+                return resp.json(), None, resp.status_code
+            except ValueError:
+                ctype = resp.headers.get("content-type", "")
+                return None, f"non-JSON response (content-type={ctype})", resp.status_code
+
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            if TRACE:
+                events.append({"event": "http_error", "attempt": attempt, "message": str(exc)})
+            if attempt == MAX_RETRIES:
+                return None, f"request failed: {exc}", None
+            await asyncio.sleep(_backoff_sleep_seconds(attempt))
+
+    return None, "request failed (exhausted retries)", None
+
+
+async def _document_links(nnt: str, events: list[dict[str, Any]]) -> dict[str, str]:
+    """Full-text links of an online thesis, each checked rather than assumed.
+
+    /document/{nnt} redirects to wherever the text lives (HAL, an institutional
+    repository); /abes/{nnt} serves the PDF ABES holds, which not every online
+    thesis has. Both answer 403 for a thesis that is not online. HEAD only: the
+    PDF can weigh tens of megabytes.
+    """
+    links: dict[str, str] = {}
+    quoted = urllib.parse.quote(nnt)
+    for key, url in (("fulltext_url", f"{API_URL}/document/{quoted}"),
+                     ("pdf_url", f"{API_URL}/abes/{quoted}")):
+        try:
+            resp = await HTTP.head(url, follow_redirects=False)
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            if TRACE:
+                events.append({"event": "http_error", "url": url, "message": str(exc)})
+            continue
+        if TRACE:
+            events.append({"event": "http_head", "url": url, "status_code": resp.status_code})
+        if resp.status_code in (301, 302, 303, 307, 308) and resp.headers.get("location"):
+            links[key] = resp.headers["location"]
+        elif resp.status_code == 200:
+            links[key] = url
+    return links
+
+
+# ── Establishment referential ─────────────────────────────────────────────────
+
+_ETAB: list[dict[str, Any]] | None = None
+_ETAB_ERROR: str | None = None
+_ETAB_FAILED_AT = 0.0
+_ETAB_RETRY_SECONDS = 300
+_ETAB_LOCK = asyncio.Lock()
+
+
+def _fold(text: str) -> str:
+    """Case-, accent- and punctuation-insensitive form for name matching."""
+    text = unicodedata.normalize("NFKD", text.replace("’", "'"))
+    text = "".join(c for c in text if not unicodedata.combining(c)).lower()
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", text).split())
+
+
+async def _etablissements() -> list[dict[str, Any]]:
+    """Load the referential once, from a file or a URL.
+
+    Empty on failure, and retried after a few minutes rather than never: a
+    long-lived server should not lose name resolution to one network blip.
+    """
+    global _ETAB, _ETAB_ERROR, _ETAB_FAILED_AT
+    async with _ETAB_LOCK:
+        if _ETAB is not None:
+            return _ETAB
+        if _ETAB_FAILED_AT and time.monotonic() - _ETAB_FAILED_AT < _ETAB_RETRY_SECONDS:
+            return []
+        source = ETAB_SOURCE or (str(ETAB_LOCAL) if ETAB_LOCAL.exists() else ETAB_REMOTE)
+        try:
+            if source.startswith(("http://", "https://")):
+                resp = await HTTP.get(source)
+                resp.raise_for_status()
+                data = resp.json()
+            else:
+                data = json.loads(pathlib.Path(source).read_text(encoding="utf-8"))
+            entries = data["etablissements"]
+        except Exception as exc:  # noqa: BLE001 - degrade to name search, never crash
+            _ETAB_ERROR = f"establishment referential unavailable ({source}): {exc}"
+            _ETAB_FAILED_AT = time.monotonic()
+            return []
+        for e in entries:
+            e["_names"] = {_fold(n) for n in [e["nom"], *e.get("alias", [])] if n}
+        _ETAB = entries
+        return _ETAB
+
+
+def _match_score(query: str, names: set[str]) -> int:
+    best = 0
+    q_tokens = set(query.split())
+    for n in names:
+        if n == query:
+            return 100
+        n_tokens = set(n.split())
+        if q_tokens <= n_tokens:
+            # Every word given is in the name; fewer extra words ranks higher.
+            best = max(best, 80 - min(20, len(n_tokens - q_tokens)))
+        elif query in n:
+            best = max(best, 50)
+    return best
+
+
+async def _find_etablissements(name: str, limit: int = 5) -> list[tuple[int, dict[str, Any]]]:
+    """Candidates as (score, entry), best first; an exact code or PPN scores 100."""
+    entries = await _etablissements()
+    raw = name.strip()
+    code = [(100, e) for e in entries if CODE_RE.match(raw) and e["code"] == raw.upper()]
+    # "COAZ" is a code; "Lyon" or "Nice" are names first, codes only failing that.
+    if code and raw.isupper():
+        return code
+    if PPN_RE.match(raw):
+        exact = [(100, e) for e in entries if e.get("ppn") == raw]
+        if exact:
+            return exact
+    q = _fold(raw)
+    scored = [(s, e) for e in entries if q and (s := _match_score(q, e["_names"]))]
+    # Ties go to the establishment still in existence, then to the latest one.
+    scored.sort(key=lambda se: (-se[0], se[1].get("fin") is not None,
+                                -(int((se[1].get("debut") or "0")[:4]))))
+    return scored[:limit] or code
+
+
+def _distinct_best(scored: list[tuple[int, dict[str, Any]]],
+                   by_code: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """The top-scoring candidates that are not one another's predecessor.
+
+    "UCA" names both Université Côte d'Azur and its ComUE predecessor — one
+    lineage, so the current one wins — but also Université Clermont Auvergne:
+    two lineages, a genuine ambiguity the caller must settle.
+    """
+    top = [e for s, e in scored if s == scored[0][0]]
+    ancestors = {c for e in top for c in _predecessor_codes(e["code"], by_code, depth=5)[1:]}
+    return [e for e in top if e["code"] not in ancestors]
+
+
+def _public_etab(e: dict[str, Any], by_code: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    def ref(code: str) -> dict[str, Any]:
+        other = by_code.get(code) or {}
+        return _compact({"code": code, "name": other.get("nom")})
+    return _compact({
+        "code": e["code"],
+        "name": e["nom"],
+        "ppn": e.get("ppn"),
+        "from": e.get("debut"),
+        "until": e.get("fin"),
+        "predecessors": [ref(c) for c in e.get("avant", [])],
+        "successors": [ref(c) for c in e.get("apres", [])],
+        "aliases": e.get("alias", [])[:6],
+    })
+
+
+def _predecessor_codes(code: str, by_code: dict[str, dict[str, Any]], depth: int = 3) -> list[str]:
+    """`code` and every code it succeeded, transitively, up to `depth` steps."""
+    seen = [code]
+    frontier = [code]
+    for _ in range(depth):
+        frontier = [p for c in frontier for p in (by_code.get(c) or {}).get("avant", [])
+                    if p not in seen]
+        if not frontier:
+            break
+        seen.extend(frontier)
+    return seen
+
+
+async def _establishment_clause(value: str, include_predecessors: bool
+                                ) -> tuple[str | None, dict[str, Any] | None, str | None]:
+    """Compile `establishment` to a Lucene clause. Returns (clause, resolved, error).
+
+    A 4-character code or a PPN is used as given; a name is resolved against
+    the referential, and only falls back to the displayed-name field when the
+    referential does not know it.
+    """
+    raw = value.strip()
+    entries = await _etablissements()
+    by_code = {e["code"]: e for e in entries}
+
+    if PPN_RE.match(raw) and raw not in by_code:
+        return f"etabSoutenancePpn:({raw})", {"ppn": raw}, None
+
+    # An upper-case 4-character value is a code, even one the referential lacks.
+    if CODE_RE.match(raw) and (raw.isupper() or not entries):
+        code = raw.upper()
+        match = by_code.get(code)
+    else:
+        matches = await _find_etablissements(raw)
+        if not matches:
+            # Not in the referential (it covers ~230 of the ~370 establishments):
+            # the displayed name is still a working, if looser, filter.
+            phrase = raw.replace('"', "")
+            return f'etabSoutenanceN:("{phrase}")', {"name": phrase, "matched_by": "name"}, None
+        best = _distinct_best(matches, by_code)
+        if len(best) > 1:
+            names = "; ".join(f"{e['code']} = {e['nom']}" for e in best)
+            return None, None, (f"'{raw}' is ambiguous: {names}. "
+                                "Pass the code of the one meant as `establishment`.")
+        match = best[0]
+        code = match["code"]
+
+    codes = _predecessor_codes(code, by_code) if include_predecessors else [code]
+    clause = f"codeEtab:({' OR '.join(codes)})"
+    resolved = {"code": code, "name": (match or {}).get("nom"), "ppn": (match or {}).get("ppn")}
+    if include_predecessors:
+        resolved["codes"] = codes
+    elif match and match.get("avant"):
+        resolved["note"] = (f"Former codes {', '.join(match['avant'])} are not included; "
+                            "set include_predecessors=true for earlier theses.")
+    return clause, _compact(resolved), None
+
+
+# ── Normalization ─────────────────────────────────────────────────────────────
+
+def _compact(d: dict[str, Any]) -> dict[str, Any]:
+    """Drop None, empty strings and empty containers: absent means unknown."""
+    return {k: v for k, v in d.items() if v not in (None, "", [], {})}
+
+
+def _clean(v: Any) -> str | None:
+    if isinstance(v, list):
+        v = v[0] if v else None
+    if v is None:
+        return None
+    return str(v).strip() or None
+
+
+def _year(date: str | None) -> int | None:
+    """Dates are DD/MM/YYYY upstream."""
+    if not date or len(date) < 4:
+        return None
+    try:
+        return int(date[-4:])
+    except ValueError:
+        return None
+
+
+def _full_name(p: dict[str, Any]) -> str:
+    """"Prénom Nom", in NFC: some records store names with decomposed accents."""
+    full = f"{(p.get('prenom') or '').strip()} {(p.get('nom') or '').strip()}".strip()
+    return unicodedata.normalize("NFC", full)
+
+
+def _person_names(people: Any) -> list[str]:
+    out: list[str] = []
+    for p in people or []:
+        if isinstance(p, dict):
+            if full := _full_name(p):
+                out.append(full)
+        elif p:
+            out.append(str(p))
+    return out
+
+
+def _person_name(p: Any) -> str | None:
+    """One person — `president` / `presidentJury` is a bare object, not a list."""
+    names = _person_names([p]) if isinstance(p, dict) else []
+    return names[0] if names else None
+
+
+def _org_names(orgs: Any) -> list[str]:
+    """Establishments, doctoral schools and laboratories are all {ppn, nom, type}."""
+    return [n for o in orgs or [] if isinstance(o, dict)
+            for n in [_clean(o.get("nom"))] if n]
+
+
+def _dedup(values: list[str | None]) -> list[str]:
+    out: list[str] = []
+    for v in values:
+        if v and v not in out:
+            out.append(v)
+    return out
+
+
+def _truncate(text: str | None, limit: int) -> str | None:
+    if not text or len(text) <= limit:
+        return text
+    return text[:limit].rsplit(" ", 1)[0] + " […]"
+
+
+def _url(ident: str | None) -> str | None:
+    return f"https://theses.fr/{ident}" if ident else None
+
+
+def _normalize_hit(t: dict[str, Any]) -> dict[str, Any]:
+    """A search hit, trimmed to what screens a thesis for relevance."""
+    ident = t.get("nnt") or t.get("id")
+    status = _clean(t.get("status"))
+    date = _clean(t.get("dateSoutenance"))
+    keywords = _dedup([_clean(s.get("libelle"))
+                       for s in (t.get("sujets") or []) + (t.get("sujetsRameau") or [])
+                       if isinstance(s, dict)])
+    title = _clean(t.get("titrePrincipal"))
+    # titreEN is not reliably an English title upstream (records exist where it
+    # holds the discipline), and often repeats the main title; keep it only as
+    # a distinct second title.
+    title_en = _clean(t.get("titreEN"))
+    return _compact({
+        "id": ident,
+        "nnt": t.get("nnt"),
+        "status": status,
+        "title": title,
+        "title_en": title_en if title_en != title else None,
+        "authors": _person_names(t.get("auteurs")),
+        "directors": _person_names(t.get("directeurs")),
+        "defense_date": date,
+        "year": _year(date),
+        # The only date an in-progress thesis has; never a defense date.
+        "first_registration_date": _clean(t.get("datePremiereInscriptionDoctorat")),
+        "institution": _clean(t.get("etabSoutenanceN")),
+        "discipline": _clean(t.get("discipline")),
+        "keywords": keywords[:MAX_KEYWORDS],
+        "url": _url(ident),
+    })
+
+
+def _detail_keywords(d: dict[str, Any]) -> dict[str, list[str]]:
+    """`mapSujets` is {language: [{keyword, type, query}]}, free and Rameau mixed."""
+    return {lang: kws for lang, entries in (d.get("mapSujets") or {}).items()
+            if (kws := _dedup([_clean(e.get("keyword")) for e in entries or []
+                               if isinstance(e, dict)]))}
+
+
+def _normalize_detail(d: dict[str, Any]) -> dict[str, Any]:
+    ident = d.get("nnt") or d.get("numSujet")
+    resumes = d.get("resumes") or {}
+    titres = d.get("titres") or {}
+    etab = d.get("etabSoutenance") or {}
+    date = _clean(d.get("dateSoutenance"))
+    abstract_fr = _clean(resumes.get("fr"))
+    abstract_en = _clean(resumes.get("en"))
+    record = {
+        "id": ident,
+        "nnt": d.get("nnt"),
+        "subject_number": d.get("numSujet") if not d.get("nnt") else None,
+        "status": _clean(d.get("status")),
+        "title": _clean(d.get("titrePrincipal")) or _clean(titres.get("fr")) or _clean(titres.get("en")),
+        "title_fr": None,  # set below, only when it differs from `title`
+        "title_en": None,
+        "authors": _person_names(d.get("auteurs")),
+        "directors": _person_names(d.get("directeurs")),
+        "discipline": _clean(d.get("discipline")),
+        "defense_date": date,
+        "year": _year(date),
+        "first_registration_date": _clean(d.get("datePremiereInscriptionDoctorat")),
+        "institution": _compact({
+            "name": _clean(etab.get("nom")) if isinstance(etab, dict) else _clean(etab),
+            "code": _clean(d.get("codeEtab")),
+            "ppn": etab.get("ppn") if isinstance(etab, dict) else None,
+        }),
+        "cotutelle": _org_names(d.get("etabCotutelle")),
+        "doctoral_schools": _org_names(d.get("ecolesDoctorales")),
+        "research_partners": _org_names(d.get("partenairesRecherche")),
+        "jury": _compact({
+            "president": _person_name(d.get("presidentJury")),
+            "rapporteurs": _person_names(d.get("rapporteurs")),
+            "members": _person_names(d.get("membresJury")),
+        }),
+        "languages": d.get("langues") or [],
+        "keywords": _detail_keywords(d),
+        "abstract_fr": abstract_fr,
+        "abstract_en": abstract_en,
+        "abstracts_other": {k: v for k, v in resumes.items()
+                            if k not in ("fr", "en") and _clean(v)},
+        # "oui" only ever for a defended thesis whose defense version is online.
+        "online": d.get("accessible") == "oui",
+        "doi": _clean(d.get("doi")),
+        "url": _url(ident),
+    }
+    title = record["title"]
+    record["title_fr"] = t if (t := _clean(titres.get("fr"))) != title else None
+    record["title_en"] = t if (t := _clean(titres.get("en"))) != title else None
+    out = _compact(record)
+    out["online"] = record["online"]  # False is information, not absence
+    missing = [label for label, v in (("French résumé", abstract_fr), ("English résumé", abstract_en))
+               if not v]
+    if missing:
+        out["missing"] = f"No {' and no '.join(missing)} in this record — do not supply one."
+    return out
+
+
+def _normalize_person(p: dict[str, Any]) -> dict[str, Any]:
+    theses = p.get("theses") or []
+    return _compact({
+        "id": p.get("id"),
+        "name": _full_name(p),
+        "idref_ppn": p.get("id") if p.get("has_idref") else None,
+        "roles": p.get("roles") or {},
+        "theses_count": len(theses),
+        "theses": theses[:MAX_PERSON_THESES],
+        "url": f"https://theses.fr/{p.get('id')}" if p.get("id") else None,
+    })
+
+
+def _clean_topic(topic: str) -> str:
+    """A free-text topic as a bare Lucene query: escape what is not syntax.
+
+    Boolean operators, phrase quotes, parentheses and `*` truncation are kept;
+    an odd quote count, which upstream rejects with a 400, drops the quotes.
+    """
+    text = LUCENE_ESCAPE_RE.sub(r"\\\1", topic.strip())
+    if text.count('"') % 2:
+        text = text.replace('"', "")
+    if text.count("(") != text.count(")"):
+        text = text.replace("(", " ").replace(")", " ")
+    return " ".join(text.split())
+
+
+def _person_clause(field: str, value: str) -> str:
+    """Compile a person filter on `<field>NP`, or on `<field>Ppn` for a PPN.
+
+    The NP fields hold name tokens in no fixed order, so the phrase never
+    matches: the words are ANDed, unquoted. And some records store names with
+    decomposed accents (NFD: "e" + U+0301), which the index does not fold —
+    "Frédéric" typed normally misses them; for Frédéric Precioso, 9 of his 23
+    theses. Every accented word is therefore sought in both forms. An
+    unaccented spelling cannot reach those records ("Frederic" finds 14); a
+    fuzzy match would, but it also turns "Jean Martin" from 455 hits into 627,
+    so the tool asks for accents or a PPN instead.
+    """
+    raw = value.strip()
+    if PPN_RE.match(raw):
+        return f"{field}Ppn:({raw})"
+    terms = []
+    for word in _clean_topic(raw).replace('"', "").replace("(", " ").replace(")", " ").split():
+        if word in ("AND", "OR", "NOT"):
+            continue
+        nfc = unicodedata.normalize("NFC", word)
+        nfd = unicodedata.normalize("NFD", word)
+        terms.append(f"({nfc} OR {nfd})" if nfc != nfd else word)
+    return f"{field}NP:({' AND '.join(terms)})"
+
+
+def _iso_bound(value: str | None, upper: bool) -> str | None:
+    """Accept YYYY as well as YYYY-MM-DD; a year spans the whole year."""
+    if not value:
+        return None
+    value = value.strip()
+    if re.fullmatch(r"\d{4}", value):
+        return f"{value}-12-31" if upper else f"{value}-01-01"
+    return value
+
+
+def _envelope(command: str, **extra: Any) -> dict[str, Any]:
+    return {"source": "theses-fr", "command": command, **extra, "error": None}
+
+
+def _finish(out: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
+    if TRACE:
+        out["trace"] = events
+    return out
+
+
+# ── Tools ─────────────────────────────────────────────────────────────────────
+
+async def search_theses(
+    topic: str = "",
+    establishment: str | None = None,
+    status: Literal["soutenue", "enCours"] | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    discipline: str | None = None,
+    author: str | None = None,
+    director: str | None = None,
+    online: bool | None = None,
+    language: str | None = None,
+    domain: str | None = None,
+    organisation_ppn: str | None = None,
+    organisation_role: Literal["etabSoutenance", "etabCotutelle", "partenaireRecherche",
+                               "ecoleDoctorale", "any"] = "any",
+    include_predecessors: bool = False,
+    query: str = "",
+    sort: Literal["pertinence", "dateDesc", "dateAsc", "auteursAsc", "auteursDesc",
+                  "disciplineAsc", "disciplineDesc"] | None = None,
+    max_results: int = 10,
+    start: int = 0,
+    with_abstracts: bool = False,
+) -> dict[str, Any]:
+    """
+    Search French doctoral theses on theses.fr, defended or in preparation.
+
+    Example, for "theses on marine renewable energy defended at Université
+    Côte d'Azur since 2020" — search_theses(topic="énergies marines
+    renouvelables", establishment="Université Côte d'Azur", status="soutenue",
+    date_from="2020").
+
+    Put the subject in `topic`, in plain words, French and/or English. It is
+    stemmed, accent-insensitive, and searched in titles, résumés and keywords.
+    Words are ANDed; write OR between alternatives ("hydrolienne OR
+    houlomotrice OR éolien en mer"); quote a phrase; `énerg*` truncates. Do not
+    write field prefixes in `topic`.
+
+    `author` and `director` take a name with its accents ("Frédéric
+    Precioso", not "Frederic": some records store names in a form only the
+    accented spelling reaches) or, exactly and without homonyms, an IdRef PPN
+    ("087273934", from search_persons).
+
+    `establishment` takes a name ("Université Côte d'Azur", "UCA", "Sorbonne
+    Université"), a 4-character code ("COAZ") or a PPN; the establishment it
+    resolved to is echoed in `establishment_resolved`. Establishments merge
+    and change code: include_predecessors=true also searches the former ones
+    (COAZ ← AZUR ← NICE).
+
+    A thesis in preparation (status="enCours") has no defense date and usually
+    no NNT; its id is then a subject number "s…". `date_from`/`date_to` filter on the
+    defense date, so they exclude every thesis in preparation.
+
+    Search hits carry no résumé: with_abstracts=true adds a truncated one to
+    the first 10 hits; get_thesis gives the full record. The response holds
+    `total_found` (the true count, report it), `results` (one page: id, nnt,
+    status, title, authors, directors, defense_date, year,
+    first_registration_date, institution, discipline, keywords, url),
+    `query_used`, and `hint` when nothing matched. Fields with no value are
+    omitted.
+
+    Args:
+        topic: Subject in plain words, e.g. "apprentissage automatique OR deep learning".
+        establishment: Awarding establishment: name, code ("COAZ") or PPN.
+        status: "soutenue" (defended) or "enCours" (in preparation).
+        date_from: Defense date lower bound, "YYYY" or "YYYY-MM-DD".
+        date_to: Defense date upper bound, "YYYY" or "YYYY-MM-DD".
+        discipline: Discipline words, e.g. "informatique".
+        author: Author name, e.g. "Giuseppe Di Lena" (word order free), or IdRef PPN.
+        director: Supervisor name, e.g. "Frédéric Precioso", or IdRef PPN, e.g. "087273934" (exact, no homonyms).
+        online: True for theses whose full text is online (defended only).
+        language: ISO 639-1 writing language, e.g. "en".
+        domain: A "Domaines thématiques" label from list_facets, e.g. "Informatique".
+        organisation_ppn: IdRef PPN of any organisation (laboratory, doctoral school, partner).
+        organisation_role: Role that organisation played; "any" matches all four.
+        include_predecessors: Also match the establishment's former codes.
+        query: Expert only — raw Lucene ANDed with the rest, e.g. 'sujetsRameauLibelle:("Énergie éolienne")'.
+        sort: Ordering; default relevance.
+        max_results: Page size, 1-50.
+        start: Offset of the page.
+        with_abstracts: Add a truncated French/English résumé to the first 10 hits.
+    """
+    events: list[dict[str, Any]] = []
+    clauses: list[str] = []
+    out = _envelope("search_theses", total_found=None, returned=0, results=[])
+
+    if topic.strip():
+        clauses.append(f"({_clean_topic(topic)})")
+    if query.strip():
+        clauses.append(f"({query.strip()})")
+    etab_clause = None
+    if establishment and establishment.strip():
+        etab_clause, resolved, err = await _establishment_clause(establishment, include_predecessors)
+        if err:
+            out["error"] = err
+            return _finish(out, events)
+        out["establishment_resolved"] = resolved
+        clauses.append(etab_clause)
+    if status:
+        clauses.append(f"status:({status})")
+    lo, hi = _iso_bound(date_from, False), _iso_bound(date_to, True)
+    if lo or hi:
+        clauses.append(f"dateSoutenance:([{lo or '*'} TO {hi or '*'}])")
+    if discipline:
+        clauses.append(f"discipline:({_clean_topic(discipline)})")
+    if author:
+        clauses.append(_person_clause("auteurs", author))
+    if director:
+        clauses.append(_person_clause("directeurs", director))
+    if online is not None:
+        clauses.append(f"accessible:({'oui' if online else 'non'})")
+    if language:
+        clauses.append(f"langues:({language.strip().lower()})")
+    if domain:
+        # A controlled label: unquoted, it is tokenized and over- or under-matches.
+        clauses.append(f'oaiSetNames:("{domain.replace(chr(34), "")}")')
+    if organisation_ppn:
+        ppn = organisation_ppn.strip()
+        fields = ROLE_FIELDS.values() if organisation_role == "any" else [ROLE_FIELDS[organisation_role]]
+        clauses.append("(" + " OR ".join(f"{f}:({ppn})" for f in fields) + ")")
+
+    q = " AND ".join(clauses) if clauses else "*"
+    out["query_used"] = q
+    rows = max(1, min(max_results, MAX_ROWS))
+    params = [("q", q), ("nombre", str(rows)), ("debut", str(max(0, start)))]
+    if sort:
+        params.append(("tri", sort))
+
+    data, error, code = await _http_get(f"{BASE_URL}/recherche/", params, events=events)
+    if error or not isinstance(data, dict):
+        if code == 400:
+            out["error"] = ("theses.fr rejected the query (HTTP 400): invalid Lucene. "
+                            "Put the subject in `topic` as plain words; in `query`, check "
+                            "quotes and parentheses — `(field1 OR field2):(x)` is not valid, "
+                            "write `field1:(x) OR field2:(x)`.")
+        else:
+            out["error"] = f"theses.fr search failed: {error or 'unexpected response shape'}"
+        return _finish(out, events)
+
+    hits = [t for t in data.get("theses") or [] if isinstance(t, dict)]
+    results = [_normalize_hit(t) for t in hits]
+    out["total_found"] = data.get("totalHits")
+    out["returned"] = len(results)
+
+    if with_abstracts:
+        async def fetch(r: dict[str, Any]) -> None:
+            detail, d_error, _ = await _http_get(
+                f"{BASE_URL}/these/{urllib.parse.quote(str(r['id']))}", events=events)
+            if d_error or not isinstance(detail, dict):
+                r["abstract_error"] = d_error or "unexpected record shape"
+                return
+            resumes = detail.get("resumes") or {}
+            for lang in ("fr", "en"):
+                if text := _truncate(_clean(resumes.get(lang)), SEARCH_ABSTRACT_CHARS):
+                    r[f"abstract_{lang}"] = text
+            r["online"] = detail.get("accessible") == "oui"
+        await asyncio.gather(*(fetch(r) for r in results[:MAX_ABSTRACT_HITS] if r.get("id")))
+
+    out["results"] = results
+
+    if not results:
+        out["hint"] = await _zero_hint(etab_clause, establishment, topic, query, events)
+    return _finish(out, events)
+
+
+async def _zero_hint(etab_clause: str | None, establishment: str | None, topic: str,
+                     query: str, events: list[dict[str, Any]]) -> str:
+    """Say why a search found nothing, so an agent fixes the right part."""
+    if etab_clause:
+        data, _, _ = await _http_get(f"{BASE_URL}/recherche/",
+                                     [("q", etab_clause), ("nombre", "1")], events=events)
+        if isinstance(data, dict) and not data.get("totalHits"):
+            return (f"The establishment filter alone ({etab_clause}) matches no thesis: "
+                    f"'{establishment}' is the wrong establishment or code. "
+                    f"Call resolve_establishment('{establishment}') and pick a candidate "
+                    "with a non-zero theses_count.")
+    if "titrePrincipal:" in query or "resumes." in query:
+        return ("Field queries are neither stemmed nor accent-folded; retry with the "
+                "words in `topic`, which also covers résumés and keywords.")
+    return ("No thesis matches every constraint. This can be the true answer; "
+            "to widen, drop a filter or add synonyms with OR in `topic`.")
+
+
+async def resolve_establishment(name: str, max_results: int = 5) -> dict[str, Any]:
+    """
+    Find a French doctoral establishment's code (codeEtab), PPN and lineage.
+
+    Use this when unsure which establishment a name, acronym or city means, or
+    to see its former and later codes: French universities merge and change
+    code (Nice → Université Côte d'Azur ComUE → Université Côte d'Azur). Pass
+    the `code` to search_theses(establishment=…), or the `ppn` to
+    search_by_organisme.
+
+    Args:
+        name: Name, acronym or code, e.g. "UCA", "Paris-Saclay", "Lille", "COAZ".
+        max_results: Maximum candidates, best match first.
+
+    Returns:
+        {"results": [{"code": "COAZ", "name": "Université Côte d'Azur",
+          "ppn": "241035694", "from": "2020-01-01", "until"?: str,
+          "predecessors": [{"code", "name"}], "successors": [...],
+          "aliases": [str], "theses_count": int}], "error": str | null}
+        `theses_count` is live: theses (defended and in preparation) under that code.
+    """
+    events: list[dict[str, Any]] = []
+    out = _envelope("resolve_establishment", query_used=name, returned=0, results=[])
+    entries = await _etablissements()
+    if not entries:
+        out["error"] = (_ETAB_ERROR or "establishment referential unavailable") + \
+            " — use list_facets(facet='Établissements', contains=…) for the displayed names."
+        return _finish(out, events)
+    by_code = {e["code"]: e for e in entries}
+    matches = await _find_etablissements(name, max(1, min(max_results, 20)))
+
+    async def count(code: str) -> int | None:
+        data, _, _ = await _http_get(f"{BASE_URL}/recherche/",
+                                     [("q", f"codeEtab:({code})"), ("nombre", "1")], events=events)
+        return data.get("totalHits") if isinstance(data, dict) else None
+
+    matches = [e for _, e in matches]
+    counts = await asyncio.gather(*(count(e["code"]) for e in matches))
+    out["results"] = [{**_public_etab(e, by_code), "theses_count": c}
+                      for e, c in zip(matches, counts, strict=True)]
+    out["returned"] = len(out["results"])
+    if not matches:
+        out["hint"] = (f"'{name}' is not in the referential (it covers the ~230 establishments "
+                       "with an ABES code). search_theses(establishment=…) still accepts the "
+                       "name and filters on the displayed name; list_facets(facet="
+                       "'Établissements', contains=…) shows the names theses.fr uses.")
+    return _finish(out, events)
+
+
+async def get_thesis(id: str) -> dict[str, Any]:
+    """
+    Fetch one thesis record: full metadata, both résumés, jury, full-text link.
+
+    Use this whenever an identifier is known — it is the only source of the
+    résumés and of online availability. Quote the résumés exactly as returned;
+    when one is missing, `missing` says so: do not translate or invent it.
+
+    Args:
+        id: NNT of a defended thesis, e.g. "2021COAZ4028", or subject number
+            of a thesis in preparation, e.g. "s312947".
+
+    Returns:
+        {"found": bool, "result": {"id", "nnt", "subject_number"?, "status",
+          "title", "title_fr", "title_en", "authors", "directors", "discipline",
+          "defense_date", "first_registration_date", "institution": {"name",
+          "code", "ppn"}, "cotutelle", "doctoral_schools", "research_partners",
+          "jury": {"president", "rapporteurs", "members"}, "languages",
+          "keywords": {"fr": [...], "en": [...]}, "abstract_fr", "abstract_en",
+          "online": bool, "fulltext_url"?, "pdf_url"?, "doi", "url",
+          "missing"?: str} | null, "error": str | null}
+    """
+    events: list[dict[str, Any]] = []
+    ident = id.strip()
+    if not SUJET_RE.match(ident):
+        ident = ident.upper()
+    out = _envelope("get_thesis", query_used=ident, found=False, result=None)
+    if not (NNT_RE.match(ident) or SUJET_RE.match(ident)):
+        out["error"] = (f"'{id}' is not a theses.fr identifier: an NNT has 12 characters "
+                        "(e.g. 2021COAZ4028), a subject number is 's' + digits (e.g. s312947).")
+        return _finish(out, events)
+
+    data, error, code = await _http_get(f"{BASE_URL}/these/{urllib.parse.quote(ident)}",
+                                        events=events)
+    if error or not isinstance(data, dict):
+        if code in (400, 404) or error == "empty response":
+            out["error"] = (f"No thesis with identifier {ident} on theses.fr. "
+                            "Do not describe it; offer a search by subject or author instead.")
+        else:
+            out["error"] = f"theses.fr record fetch failed: {error or 'unexpected response shape'}"
+        return _finish(out, events)
+
+    record = _normalize_detail(data)
+    if record.get("online") and record.get("nnt"):
+        record.update(await _document_links(record["nnt"], events))
+    out["found"] = True
+    out["result"] = record
+    return _finish(out, events)
+
+
+async def search_persons(
+    name: str,
+    max_results: int = 10,
+    start: int = 0,
+) -> dict[str, Any]:
+    """
+    Search the theses.fr person index: authors, supervisors, rapporteurs, jury.
+
+    Use this to see every role a person played and the identifiers of their
+    theses (pass them to get_thesis). To list one person's theses with
+    filters, search_theses(director=…) or (author=…) is usually simpler.
+
+    Args:
+        name: Person name, e.g. "Turletti" or "Thierry Turletti". Surname alone works best.
+        max_results: Page size, 1-50.
+        start: Offset of the page.
+
+    Returns:
+        {"total_found": int, "returned": int, "results": [{"id", "name",
+          "idref_ppn"?, "roles": {"Directeur / Directrice": 14, ...},
+          "theses_count": int, "theses": [first 20 ids], "url"}], "error"}
+    """
+    events: list[dict[str, Any]] = []
+    rows = max(1, min(max_results, MAX_ROWS))
+    params = [("q", name), ("nombre", str(rows)), ("debut", str(max(0, start)))]
+    out = _envelope("search_persons", query_used=name, total_found=None, returned=0, results=[])
+    data, error, _ = await _http_get(f"{PERSONS_URL}/recherche/", params, events=events)
+    if error or not isinstance(data, dict):
+        out["error"] = f"theses.fr person search failed: {error or 'unexpected response shape'}"
+        return _finish(out, events)
+    people = [p for p in data.get("personnes") or [] if isinstance(p, dict)]
+    out["total_found"] = data.get("totalHits")
+    out["returned"] = len(people)
+    out["results"] = [_normalize_person(p) for p in people]
+    return _finish(out, events)
+
+
+async def list_facets(
+    topic: str = "",
+    query: str = "",
+    facet: Literal["Statut", "Établissements", "Écoles doctorales",
+                   "Domaines thématiques", "Disciplines", "Langues"] | None = None,
+    contains: str | None = None,
+    limit: int = 15,
+) -> dict[str, Any]:
+    """
+    Count theses per facet value — establishments, disciplines, domains, etc.
+
+    Use this to break a result set down ("which establishments host theses on
+    X?") or to find the exact label a filter needs (`domain` takes a
+    "Domaines thématiques" label). Counts are relative to the query.
+
+    Args:
+        topic: Subject in plain words, as in search_theses. Empty = whole corpus.
+        query: Expert only — raw Lucene, ANDed with `topic`.
+        facet: Return this facet only; omit for all six.
+        contains: Keep only values containing this text (accent-insensitive),
+            e.g. facet="Établissements", contains="Côte d'Azur".
+        limit: Maximum values per facet, 1-100, largest counts first.
+
+    Returns:
+        {"results": [{"facet": "Établissements", "values_total": int,
+          "values": [{"value": "Université Côte d'Azur", "count": 2815}]}],
+         "query_used": str, "error": str | null}
+    """
+    events: list[dict[str, Any]] = []
+    parts = [f"({_clean_topic(topic)})" if topic.strip() else "",
+             f"({query.strip()})" if query.strip() else ""]
+    q = " AND ".join(p for p in parts if p) or "*"
+    out = _envelope("list_facets", query_used=q, results=[])
+    data, error, code = await _http_get(f"{BASE_URL}/facets/", [("q", q)], events=events)
+    if error or not isinstance(data, list):
+        out["error"] = ("theses.fr rejected the query (HTTP 400): invalid Lucene."
+                        if code == 400 else
+                        f"theses.fr facets failed: {error or 'unexpected response shape'}")
+        return _finish(out, events)
+
+    limit = max(1, min(limit, 100))
+    needle = _fold(contains) if contains else None
+    for f in data:
+        if not isinstance(f, dict) or (facet and f.get("name") != facet):
+            continue
+        values = [{"value": c.get("name"), "count": c.get("value")}
+                  for c in f.get("checkboxes") or [] if isinstance(c, dict)]
+        if needle:
+            values = [v for v in values if needle in _fold(str(v["value"] or ""))]
+        values.sort(key=lambda v: -(v["count"] or 0))
+        out["results"].append({"facet": f.get("name"), "values_total": len(values),
+                               "values": values[:limit]})
+    return _finish(out, events)
+
+
+async def search_by_organisme(
+    ppn: str,
+    role: Literal["etabSoutenance", "etabCotutelle",
+                  "partenaireRecherche", "ecoleDoctorale"] | None = None,
+    status: Literal["soutenue", "enCours"] | None = None,
+    max_results: int = 5,
+) -> dict[str, Any]:
+    """
+    Profile an organisation: how many theses it took part in, per role.
+
+    Answers "how many theses did this laboratory / university / doctoral
+    school take part in, and as what" in one call: awarding establishment,
+    cotutelle partner, research partner, doctoral school — each split into
+    defended and in preparation — plus a few sample theses. To list or filter
+    those theses (by topic, date…), use search_theses(organisation_ppn=…,
+    organisation_role=…), which pages through all of them.
+
+    Args:
+        ppn: IdRef PPN of the organisation, e.g. "241035694" (from
+            resolve_establishment, or `institution.ppn` of a record).
+        role: Keep one role; omit for all four.
+        status: Keep defended ("soutenue") or in-preparation ("enCours") samples.
+        max_results: Sample theses returned, 0-20 (the counts are always complete).
+
+    Returns:
+        {"organisme": {"ppn", "name"}, "totals": {"etabSoutenance":
+          {"soutenue": int, "enCours": int}, ...}, "total_found": int,
+          "returned": int, "results": [hits with "role"], "error"}
+    """
+    events: list[dict[str, Any]] = []
+    ppn = ppn.strip()
+    out = _envelope("search_by_organisme", query_used=ppn, organisme={"ppn": ppn},
+                    totals={}, total_found=0, returned=0, results=[])
+
+    name, name_error, _ = await _http_get(
+        f"{BASE_URL}/getorganismename/{urllib.parse.quote(ppn)}", events=events, as_text=True)
+    if name_error is not None:
+        # A person's PPN answers /organisme/ with every bucket empty,
+        # indistinguishable from an organisation with no theses.
+        out["error"] = (f"No organisation found for PPN {ppn} — it is probably a person's "
+                        "PPN (try search_persons) or a typo (try resolve_establishment).")
+        return _finish(out, events)
+    out["organisme"]["name"] = _clean(name)
+
+    data, error, _ = await _http_get(f"{BASE_URL}/organisme/{urllib.parse.quote(ppn)}",
+                                     events=events)
+    if error or not isinstance(data, dict):
+        out["error"] = f"theses.fr organisation fetch failed: {error or 'unexpected response shape'}"
+        return _finish(out, events)
+
+    limit = max(0, min(max_results, 20))
+    total = 0
+    samples: list[dict[str, Any]] = []
+    for r in (role,) if role else ORGANISME_ROLES:
+        per_role = {}
+        for key, st in ((r, "soutenue"), (f"{r}EnCours", "enCours")):
+            count = data.get(f"totalHits{key}")
+            if isinstance(count, int):
+                per_role[st] = count
+                total += count
+            if status in (None, st):
+                for t in data.get(key) or []:
+                    if isinstance(t, dict) and len(samples) < limit:
+                        samples.append({**_normalize_hit(t), "role": r})
+        if any(per_role.values()):
+            out["totals"][r] = per_role
+    out["total_found"] = total
+    out["returned"] = len(samples)
+    out["results"] = samples
+    return _finish(out, events)
