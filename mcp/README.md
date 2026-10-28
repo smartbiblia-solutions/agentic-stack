@@ -16,7 +16,7 @@ as a Hugging Face Space.
 | [`primo`](./primo/) | 8013 | **yes** | An institutional Primo (Ex Libris) discovery layer: catalogue search and record retrieval |
 | [`recherche-data-gouv`](./recherche-data-gouv/) | 8014 | no | French national research data repository (Dataverse): dataset and collection search, collection and dataset retrieval, file listings, usage metrics, metadata blocks |
 | [`idref-resolver-api`](./idref-resolver-api/) | 8015 | **yes** | Person-to-IdRef-PPN alignment from free-text clues, with an explicit abstention when the evidence is too weak |
-| [`theses-fr`](./theses-fr/) | 8017 | no | theses.fr, the French national register of doctoral theses (ABES): thesis search with résumé hydration, record lookup by NNT, person index, facets |
+| [`theses-fr`](./theses-fr/) | 8017 | no | theses.fr, the French national register of doctoral theses (ABES): stemmed subject search, establishment resolution by name, record lookup with both résumés and full-text links, person index, facets |
 | [`opencitations`](./opencitations/) | 8018 | no | OpenCitations Meta v1 and Index v2 (CC0): citation and reference counts, citing and cited works with self-citation flags, bibliographic metadata by identifier |
 
 [`cli/src/smartbiblia/catalog.toml`](../cli/src/smartbiblia/catalog.toml) is the
@@ -63,8 +63,8 @@ and troubleshooting.
 
 **`idref-resolver-api`** — `align_person`
 
-**`theses-fr`** — `search_theses`, `get_thesis`, `search_persons`,
-`list_facets`, `search_by_organisme`
+**`theses-fr`** — `search_theses`, `resolve_establishment`, `get_thesis`,
+`search_persons`, `list_facets`, `search_by_organisme`
 
 **`opencitations`** — `get_citation_counts`, `get_citations`,
 `get_references`, `lookup_metadata`, `list_works_by_person`

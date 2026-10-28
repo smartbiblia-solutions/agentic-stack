@@ -13,7 +13,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 RUN uv pip install --system --no-cache "fastmcp>=3.4,<4" "httpx"
 
 WORKDIR /app
-COPY mcp_server.py /app/mcp_server.py
+COPY mcp_server.py etablissements.json /app/
 
 EXPOSE 8017
 
