@@ -18,7 +18,7 @@ same envelope:
 - `search_by_organisme`
 
 The copy is **generated**: change a tool in `../mcp_server.py`, then run
-`python3 mcp/theses-fr/scripts/sync_modal.py` and commit both files together.
+`python3 mcp/theses-fr/scripts/sync_copies.py` and commit the regenerated files together.
 `test_tool` below checks the deployed result.
 
 Nothing is mounted into the image, so the establishment referential
